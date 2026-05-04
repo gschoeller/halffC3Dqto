@@ -316,11 +316,14 @@
     (progn (princ "\nERROR: No valid HGL data found in Excel.") (exit)))
   (princ (strcat "\nRead " (itoa (length data)) " pipe row(s)."))
 
-  ;; Model-space annotation scale (e.g. 20 for 1:20 drawing).
-  ;; Profile view scales reported on paper must be divided by this value to
-  ;; get drawing units per real unit.  The routine applies it automatically.
-  (setq anno-scale (max 1.0 (getvar "CANNOSCALEVALUE")))
-  (princ (strcat "\nAnnotation scale: 1:" (rtos anno-scale 2 0)))
+  ;; Civil 3D drawing scale (set in Toolspace > Drawing Settings).
+  ;; This is NOT the AutoCAD annotation scale - they are independent.
+  ;; Enter the denominator: 20 for 1:20, 50 for 1:50, etc.
+  ;; Profile view paper scales are divided by this to reach model coords.
+  (setq anno-scale (hgl:prompt-real
+    "Civil 3D drawing scale denominator (e.g. 20 for 1:20)"
+    (max 1.0 (getvar "CANNOSCALEVALUE"))))
+  (if (not anno-scale) (progn (princ "\nCancelled.") (exit)))
 
   ;; 3. Civil 3D profile view auto-read (optional) ------------------
   (princ "\n--- Profile View Parameters ---")
