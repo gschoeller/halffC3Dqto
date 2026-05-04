@@ -1,8 +1,9 @@
 ;; =====================================================================
 ;; HGL Profile Polyline - halff_hgl_draw.lsp
 ;;
-;; Excel columns: A=Pipe, B=Start Station (DS end), C=End Station (US end),
-;;                D=DS HGL, E=US HGL.  Row 1 = header; data starts row 2.
+;; Excel columns: A=Pipe, B=DS Station, C=US Station,
+;;                D=DS HGL, E=US HGL, F=Design Station (ignored).
+;;                Row 1 = header; data starts row 2.
 ;;
 ;; Commands:
 ;;   HGLSET  - browse to and save the Excel file path (stored in a
@@ -135,12 +136,13 @@
 
 ;; -------------------------------------------------------------------
 ;; READ HGL DATA FROM EXCEL
-;; Returns list of (pipe start-sta end-sta ds-hgl us-hgl).
-;; Stops on the first row with an empty Start Station cell.
+;; Returns list of (pipe ds-sta us-sta ds-hgl us-hgl).
+;; Col F (Design Station) is present in the sheet but not read.
+;; Stops on the first row with an empty DS Station cell (col B).
 ;; -------------------------------------------------------------------
 
 (defun hgl:read-excel (xlsx / pair xl wb ws nrows row data
-                             pipe sta-s sta-e ds us)
+                             pipe ds-sta us-sta ds us)
   (setq data nil)
   (setq pair (hgl:xl-open xlsx))
   (if (not pair)
@@ -151,16 +153,17 @@
       (setq nrows (hgl:used-rows ws))
       (setq row 2)
       (while (<= row nrows)
-        (setq sta-s (hgl:cell-num ws row 2))
-        (if (not sta-s)
+        (setq ds-sta (hgl:cell-num ws row 2)) ;; col B: DS Station
+        (if (not ds-sta)
           (setq row (1+ nrows))
           (progn
-            (setq pipe  (hgl:cell-str ws row 1)
-                  sta-e (hgl:cell-num ws row 3)
-                  ds    (hgl:cell-num ws row 4)
-                  us    (hgl:cell-num ws row 5))
-            (if (and sta-e ds us)
-              (setq data (append data (list (list pipe sta-s sta-e ds us)))))
+            (setq pipe   (hgl:cell-str ws row 1)
+                  us-sta (hgl:cell-num ws row 3) ;; col C: US Station
+                  ds     (hgl:cell-num ws row 4) ;; col D: DS HGL
+                  us     (hgl:cell-num ws row 5)) ;; col E: US HGL
+                  ;; col F: Design Station - not read
+            (if (and us-sta ds us)
+              (setq data (append data (list (list pipe ds-sta us-sta ds us)))))
             (setq row (1+ row)))))
       (hgl:xl-close xl wb)
       data)))
@@ -272,7 +275,7 @@
 
 (defun c:HGLDRAW (/ xlsx data ent pv-data
                     ox oy sta-datum elev-datum h-scale v-scale layer
-                    pts row pipe sta-s sta-e ds us
+                    pts row pipe ds-sta us-sta ds us
                     lo-sta lo-hgl hi-sta hi-hgl lx ly hx hy
                     cur-pt echo-save ent-hgl origin)
 
@@ -372,18 +375,17 @@
 
   (setq pts '())
   (foreach row data
-    (setq sta-s (nth 1 row)
-          sta-e (nth 2 row)
-          ds    (nth 3 row)
-          us    (nth 4 row))
+    (setq ds-sta (nth 1 row)
+          us-sta (nth 2 row)
+          ds     (nth 3 row)
+          us     (nth 4 row))
 
-    ;; Orient so lo-* is the downstream (lower-station) end.
-    ;; The spreadsheet labels col B as DS end and col C as US end, so:
-    ;;   normal  (sta-s <= sta-e): lo = DS(sta-s, ds), hi = US(sta-e, us)
-    ;;   reversed (sta-s > sta-e): lo = US(sta-e, us), hi = DS(sta-s, ds)
-    (if (<= sta-s sta-e)
-      (setq lo-sta sta-s  lo-hgl ds  hi-sta sta-e  hi-hgl us)
-      (setq lo-sta sta-e  lo-hgl us  hi-sta sta-s  hi-hgl ds))
+    ;; Orient so lo-* is the lower-station (DS) end.
+    ;; Col B=DS Station / col C=US Station, so normally ds-sta < us-sta.
+    ;; Guard against reversed rows just in case.
+    (if (<= ds-sta us-sta)
+      (setq lo-sta ds-sta  lo-hgl ds  hi-sta us-sta  hi-hgl us)
+      (setq lo-sta us-sta  lo-hgl us  hi-sta ds-sta  hi-hgl ds))
 
     (setq lx (hgl:sta->x  lo-sta sta-datum ox h-scale)
           ly (hgl:elev->y lo-hgl elev-datum oy v-scale)
