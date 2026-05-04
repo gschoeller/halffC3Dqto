@@ -292,8 +292,8 @@
 ;; MAIN DRAW COMMAND
 ;; -------------------------------------------------------------------
 
-(defun c:HGLDRAW (/ xlsx data ent pv-data
-                    ox oy sta-datum elev-datum h-scale v-scale is-rl layer
+(defun c:HGLDRAW (/ xlsx data ent pv-data anno-scale
+                    ox oy sta-datum elev-datum h-scale v-scale h-denom v-denom is-rl layer
                     pts row pipe ds-sta us-sta ds us
                     lo-sta lo-hgl hi-sta hi-hgl lx ly hx hy
                     cur-pt echo-save ent-hgl origin dir-str)
@@ -315,6 +315,12 @@
   (if (not data)
     (progn (princ "\nERROR: No valid HGL data found in Excel.") (exit)))
   (princ (strcat "\nRead " (itoa (length data)) " pipe row(s)."))
+
+  ;; Model-space annotation scale (e.g. 20 for 1:20 drawing).
+  ;; Profile view scales reported on paper must be divided by this value to
+  ;; get drawing units per real unit.  The routine applies it automatically.
+  (setq anno-scale (max 1.0 (getvar "CANNOSCALEVALUE")))
+  (princ (strcat "\nAnnotation scale: 1:" (rtos anno-scale 2 0)))
 
   ;; 3. Civil 3D profile view auto-read (optional) ------------------
   (princ "\n--- Profile View Parameters ---")
@@ -339,10 +345,10 @@
           (princ (strcat "\n    Origin:        (" (rtos ox 2 4) ", " (rtos oy 2 4) ")"))
           (princ (strcat "\n    Datum station: " (rtos sta-datum 2 4)))
           (princ (strcat "\n    Datum elev:    " (rtos elev-datum 2 4)))
-          (princ (strcat "\n    H-scale:       1/" (rtos (/ 1.0 (abs h-scale)) 2 1)
-                         " (drawing units per station unit)"))
-          (princ (strcat "\n    V-scale:       1/" (rtos (/ 1.0 v-scale) 2 1)
-                         " (drawing units per elevation unit)"))
+          ;; Back-calculate the paper denominator so the user sees a familiar "1\"=50'" value.
+          ;; formula: denom = anno-scale / |h-scale|  (e.g. 20 / 0.4 = 50)
+          (princ (strcat "\n    H-scale:       1\"=" (rtos (/ anno-scale (abs h-scale)) 2 1) "'"))
+          (princ (strcat "\n    V-scale:       1\"=" (rtos (/ anno-scale v-scale) 2 1) "'"))
           (princ (strcat "\n    Direction:     "
                          (if is-rl "Right-to-Left" "Left-to-Right")))
           (princ "\n  Press Enter to accept each value or type a new one."))
@@ -371,26 +377,38 @@
     "Datum elevation (elevation at bottom of profile view)" elev-datum))
   (if (not elev-datum) (progn (princ "\nCancelled.") (exit)))
 
-  (if (not h-scale) (setq h-scale 0.02))
-  (setq h-scale (hgl:prompt-real
-    "H-scale (drawing units per station unit, e.g. 1/50=0.02 for 1\"=50')" h-scale))
-  (if (not h-scale) (progn (princ "\nCancelled.") (exit)))
+  ;; H and V scale denominators.
+  ;; Enter the number after "1 inch equals" from the profile view properties
+  ;; (e.g. 50 for 1"=50', 100 for 1"=100').  The annotation scale
+  ;; (1:{anno-scale}) is multiplied in automatically so the result lands in
+  ;; model-space drawing units.  Formula: model_scale = anno_scale / denom.
+  ;; If auto-read succeeded, the denominator is back-calculated from the API
+  ;; value so you can verify it looks right before accepting.
+  (setq h-denom (if h-scale (/ anno-scale (abs h-scale)) 50.0))
+  (setq h-denom (hgl:prompt-real
+    (strcat "H-scale denominator (e.g. 50 = 1\"=50'; scale 1:"
+            (rtos anno-scale 2 0) " applied automatically)")
+    h-denom))
+  (if (not h-denom) (progn (princ "\nCancelled.") (exit)))
 
-  (if (not v-scale) (setq v-scale 0.1))
-  (setq v-scale (hgl:prompt-real
-    "V-scale (drawing units per elevation unit, e.g. 1/10=0.1 for 1\"=10')" v-scale))
-  (if (not v-scale) (progn (princ "\nCancelled.") (exit)))
+  (setq v-denom (if v-scale (/ anno-scale v-scale) 10.0))
+  (setq v-denom (hgl:prompt-real
+    (strcat "V-scale denominator (e.g. 10 = 1\"=10'; scale 1:"
+            (rtos anno-scale 2 0) " applied automatically)")
+    v-denom))
+  (if (not v-denom) (progn (princ "\nCancelled.") (exit)))
 
-  ;; Direction: L-to-R (normal) or R-to-L.  Encoded as sign of h-scale:
-  ;;   positive = L-R, negative = R-L.
-  ;; Default comes from auto-read if available, otherwise L-R.
+  ;; Direction: L-to-R (normal) or R-to-L.
+  ;; Default comes from auto-read flag; otherwise L-to-R.
   (setq dir-str (hgl:trim (getstring
     (strcat "\nProfile direction (L=left-to-right, R=right-to-left) <"
             (if is-rl "R" "L") ">: "))))
   (if (= dir-str "") (setq dir-str (if is-rl "R" "L")))
   (setq dir-str (strcase dir-str))
-  ;; Re-apply direction to the magnitude of h-scale
-  (setq h-scale (abs h-scale))
+
+  ;; Compute final model-space scales: anno_scale / denom, signed for direction.
+  (setq h-scale (/ anno-scale h-denom))
+  (setq v-scale (/ anno-scale v-denom))
   (if (= dir-str "R") (setq h-scale (- h-scale)))
 
   ;; 5. Layer -------------------------------------------------------
