@@ -171,19 +171,25 @@
 ;; -------------------------------------------------------------------
 ;; CIVIL 3D PROFILE VIEW AUTO-READ
 ;;
-;; Reads origin, datum station, datum elevation, and scales from an
-;; AECC_PROFILE_VIEW entity.  Civil 3D HorizontalScale / VerticalScale
-;; are expressed as real-units-per-drawing-unit (e.g. 50 for 1"=50'),
-;; so we invert them to produce drawing-units-per-real-unit for the
-;; coordinate transform.
+;; Reads origin, datum station, datum elevation, scales, and direction
+;; from an AECC_PROFILE_VIEW entity.
 ;;
-;; Multiple property name candidates are tried in order to accommodate
-;; different Civil 3D API versions.
+;; HorizontalScale / VerticalScale are real-units-per-drawing-unit
+;; (e.g. 50 for 1"=50'), so we invert them.
 ;;
-;; Returns (origin-x origin-y sta-datum elev-datum h-scale v-scale) or nil.
+;; SwapedViewDirection (Civil 3D's own typo) is T when the profile runs
+;; right-to-left.  For R-L profiles h-scale is returned negative so the
+;; coordinate transform X = ox + (sta - sta-datum) * h-scale places each
+;; station correctly: higher stations map to smaller X (left in drawing).
+;;
+;; Multiple property name candidates accommodate different API versions.
+;;
+;; Returns (origin-x origin-y sta-datum elev-datum h-scale v-scale is-rl)
+;; where is-rl is T for right-to-left profiles, nil for left-to-right.
+;; Returns nil if the entity is not a profile view or properties fail.
 ;; -------------------------------------------------------------------
 
-(defun hgl:pv-read (ent / vla loc ox oy sta-start elev-min h-raw v-raw res)
+(defun hgl:pv-read (ent / vla loc ox oy sta-start elev-min h-raw v-raw rl-raw is-rl res)
   (if (/= (cdr (assoc 0 (entget ent))) "AECC_PROFILE_VIEW")
     (progn (princ "\n  Not an AECC_PROFILE_VIEW - skipping auto-read.") nil)
     (progn
@@ -222,6 +228,16 @@
            (if (and v-raw (= (type v-raw) 'VARIANT))
              (setq v-raw (vlax-variant-value v-raw)))
 
+           ;; Direction: SwapedViewDirection = T means right-to-left (Civil 3D typo is intentional)
+           (setq rl-raw (hgl:try-prop vla '(SwapedViewDirection IsReversed IsFlipped)))
+           (if (and rl-raw (= (type rl-raw) 'VARIANT))
+             (setq rl-raw (vlax-variant-value rl-raw)))
+           (setq is-rl (cond
+             ((= rl-raw :vlax-true) T)
+             ((eq rl-raw T) T)
+             ((and rl-raw (hgl:num-p rl-raw) (/= rl-raw 0)) T)
+             (T nil)))
+
            (if (and ox oy
                     (hgl:num-p sta-start)
                     (hgl:num-p elev-min)
@@ -229,7 +245,10 @@
                     (and v-raw (hgl:num-p v-raw) (> v-raw 0)))
              (list ox oy
                    (float sta-start) (float elev-min)
-                   (/ 1.0 h-raw)     (/ 1.0 v-raw))
+                   ;; Negative h-scale encodes R-L direction for the transform
+                   (if is-rl (- (/ 1.0 h-raw)) (/ 1.0 h-raw))
+                   (/ 1.0 v-raw)
+                   is-rl)
              nil))))
 
       (if (vl-catch-all-error-p res)
@@ -274,10 +293,10 @@
 ;; -------------------------------------------------------------------
 
 (defun c:HGLDRAW (/ xlsx data ent pv-data
-                    ox oy sta-datum elev-datum h-scale v-scale layer
+                    ox oy sta-datum elev-datum h-scale v-scale is-rl layer
                     pts row pipe ds-sta us-sta ds us
                     lo-sta lo-hgl hi-sta hi-hgl lx ly hx hy
-                    cur-pt echo-save ent-hgl origin)
+                    cur-pt echo-save ent-hgl origin dir-str)
 
   (vl-load-com)
 
@@ -303,7 +322,7 @@
   (princ "\n  (press Enter or Esc to skip and enter values manually): ")
   (setq ent (car (entsel "")))
   (setq pv-data nil ox nil oy nil sta-datum nil elev-datum nil
-        h-scale nil v-scale nil)
+        h-scale nil v-scale nil is-rl nil)
   (if ent
     (progn
       (setq pv-data (hgl:pv-read ent))
@@ -313,16 +332,19 @@
                 oy         (nth 1 pv-data)
                 sta-datum  (nth 2 pv-data)
                 elev-datum (nth 3 pv-data)
-                h-scale    (nth 4 pv-data)
-                v-scale    (nth 5 pv-data))
+                h-scale    (nth 4 pv-data)  ; negative when R-L
+                v-scale    (nth 5 pv-data)
+                is-rl      (nth 6 pv-data))
           (princ "\n  Auto-read from profile view:")
           (princ (strcat "\n    Origin:        (" (rtos ox 2 4) ", " (rtos oy 2 4) ")"))
           (princ (strcat "\n    Datum station: " (rtos sta-datum 2 4)))
           (princ (strcat "\n    Datum elev:    " (rtos elev-datum 2 4)))
-          (princ (strcat "\n    H-scale:       1/" (rtos (/ 1.0 h-scale) 2 1)
+          (princ (strcat "\n    H-scale:       1/" (rtos (/ 1.0 (abs h-scale)) 2 1)
                          " (drawing units per station unit)"))
           (princ (strcat "\n    V-scale:       1/" (rtos (/ 1.0 v-scale) 2 1)
                          " (drawing units per elevation unit)"))
+          (princ (strcat "\n    Direction:     "
+                         (if is-rl "Right-to-Left" "Left-to-Right")))
           (princ "\n  Press Enter to accept each value or type a new one."))
         (princ "\n  Could not auto-read - enter values manually."))))
 
@@ -359,19 +381,33 @@
     "V-scale (drawing units per elevation unit, e.g. 1/10=0.1 for 1\"=10')" v-scale))
   (if (not v-scale) (progn (princ "\nCancelled.") (exit)))
 
+  ;; Direction: L-to-R (normal) or R-to-L.  Encoded as sign of h-scale:
+  ;;   positive = L-R, negative = R-L.
+  ;; Default comes from auto-read if available, otherwise L-R.
+  (setq dir-str (hgl:trim (getstring
+    (strcat "\nProfile direction (L=left-to-right, R=right-to-left) <"
+            (if is-rl "R" "L") ">: "))))
+  (if (= dir-str "") (setq dir-str (if is-rl "R" "L")))
+  (setq dir-str (strcase dir-str))
+  ;; Re-apply direction to the magnitude of h-scale
+  (setq h-scale (abs h-scale))
+  (if (= dir-str "R") (setq h-scale (- h-scale)))
+
   ;; 5. Layer -------------------------------------------------------
   (setq layer (getstring "\nLayer name for HGL polyline <HGL>: "))
   (if (or (not layer) (= (hgl:trim layer) "")) (setq layer "HGL"))
   (hgl:ensure-layer layer)
 
   ;; 6. Build point list --------------------------------------------
-  ;; Sort by the lower of the two station values so the polyline runs
-  ;; monotonically from the lowest station to the highest regardless of
-  ;; which direction pipes are listed in the spreadsheet.
+  ;; For L-R: sort ascending by min station so the polyline builds left→right.
+  ;; For R-L: sort descending by max station so it builds left→right in world
+  ;;   coords (high station = left side of drawing when h-scale is negative).
+  ;; Either way, the negative h-scale in the transform maps stations to the
+  ;; correct world X, and shared-node deduplication compares world coords.
   (setq data (vl-sort data
-    '(lambda (a b)
-       (< (min (nth 1 a) (nth 2 a))
-          (min (nth 1 b) (nth 2 b))))))
+    (if (< h-scale 0)
+      '(lambda (a b) (> (max (nth 1 a) (nth 2 a)) (max (nth 1 b) (nth 2 b))))
+      '(lambda (a b) (< (min (nth 1 a) (nth 2 a)) (min (nth 1 b) (nth 2 b)))))))
 
   (setq pts '())
   (foreach row data
@@ -380,9 +416,8 @@
           ds     (nth 3 row)
           us     (nth 4 row))
 
-    ;; Orient so lo-* is the lower-station (DS) end.
-    ;; Col B=DS Station / col C=US Station, so normally ds-sta < us-sta.
-    ;; Guard against reversed rows just in case.
+    ;; Split into lo-station and hi-station ends.
+    ;; Col B=DS Station is normally the lower station; guard either way.
     (if (<= ds-sta us-sta)
       (setq lo-sta ds-sta  lo-hgl ds  hi-sta us-sta  hi-hgl us)
       (setq lo-sta us-sta  lo-hgl us  hi-sta ds-sta  hi-hgl ds))
@@ -392,13 +427,21 @@
           hx (hgl:sta->x  hi-sta sta-datum ox h-scale)
           hy (hgl:elev->y hi-hgl elev-datum oy v-scale))
 
-    ;; Skip the lo-station point if it matches the last point already
-    ;; added (shared node between adjacent pipes).
-    (setq cur-pt (list lx ly))
-    (if (or (null pts) (not (equal (last pts) cur-pt 1e-6)))
-      (setq pts (append pts (list cur-pt))))
-
-    (setq pts (append pts (list (list hx hy)))))
+    ;; Append in the order that traces the polyline left-to-right in
+    ;; world coordinates and keeps shared nodes contiguous.
+    ;; L-R: lo-station end has smaller world X -> append lo then hi.
+    ;; R-L: hi-station end has smaller world X (negative h-scale) -> append hi then lo.
+    (if (< h-scale 0)
+      (progn
+        (setq cur-pt (list hx hy))
+        (if (or (null pts) (not (equal (last pts) cur-pt 1e-6)))
+          (setq pts (append pts (list cur-pt))))
+        (setq pts (append pts (list (list lx ly)))))
+      (progn
+        (setq cur-pt (list lx ly))
+        (if (or (null pts) (not (equal (last pts) cur-pt 1e-6)))
+          (setq pts (append pts (list cur-pt))))
+        (setq pts (append pts (list (list hx hy)))))))
 
   (if (< (length pts) 2)
     (progn (princ "\nERROR: Fewer than 2 points computed - check Excel data.") (exit)))
