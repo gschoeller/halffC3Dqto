@@ -225,51 +225,48 @@
 ;; -------------------------------------------------------------------
 ;; CIVIL 3D PROFILE VIEW AUTO-READ
 ;;
-;; Uses GetBoundingBox (SAFEARRAY by-ref) to get physical extents,
-;; then derives scale magnitudes from bbox vs. station/elev span.
-;;
-;; Returns (ox oy sta-datum elev-datum h-scale-mag v-scale-mag nil max-x)
-;; or nil on failure. Index 4 and 5 are always positive magnitudes.
-;; Index 6 is nil (direction unknown). Index 7 is right-edge X.
+;; Uses GetBoundingBox (SAFEARRAY by-ref) to get physical extents.
+;; Returns (ox oy sta-datum elev-datum h-mag v-mag nil max-ox) or nil.
+;;   ox     = left edge X (use as origin for L-R)
+;;   max-ox = right edge X (use as origin for R-L)
+;;   h-mag, v-mag = always-positive scale magnitudes
+;;   nil at index 6 = direction unknown, user must confirm
 ;; -------------------------------------------------------------------
 
-(defun hgl:pv-read (ent / vla sta-start sta-end elev-min elev-max
-                          bmv bMV bbox-min bbox-max
-                          min-x max-x oy h-mag v-mag res)
+(defun hgl:pv-read (ent / vla sta-s sta-e elv-n elv-x
+                          bb-lo bb-hi lo-x lo-y hi-x hi-y
+                          hm vm res)
   (if (/= (cdr (assoc 0 (entget ent))) "AECC_PROFILE_VIEW")
     (progn (princ "\n  Not an AECC_PROFILE_VIEW.") nil)
     (progn
       (setq res (vl-catch-all-apply
         '(lambda ()
            (setq vla (vlax-ename->vla-object ent))
-           (setq sta-start (hgl:variant->val (vlax-get-property vla 'StationStart)))
-           (setq sta-end   (hgl:variant->val (vlax-get-property vla 'StationEnd)))
-           (setq elev-min  (hgl:variant->val (vlax-get-property vla 'ElevationMin)))
-           (setq elev-max  (hgl:variant->val (vlax-get-property vla 'ElevationMax)))
-           (if (not (and (hgl:num-p sta-start) (hgl:num-p sta-end)
-                         (hgl:num-p elev-min)  (hgl:num-p elev-max)
-                         (/= sta-start sta-end) (/= elev-min elev-max)))
+           (setq sta-s (hgl:variant->val (vlax-get-property vla 'StationStart)))
+           (setq sta-e (hgl:variant->val (vlax-get-property vla 'StationEnd)))
+           (setq elv-n (hgl:variant->val (vlax-get-property vla 'ElevationMin)))
+           (setq elv-x (hgl:variant->val (vlax-get-property vla 'ElevationMax)))
+           (if (not (and (hgl:num-p sta-s) (hgl:num-p sta-e)
+                         (hgl:num-p elv-n) (hgl:num-p elv-x)
+                         (/= sta-s sta-e) (/= elv-n elv-x)))
              nil
              (progn
-               (setq bmv (vlax-make-variant
-                           (vlax-make-safearray vlax-vbDouble '(0 . 2))))
-               (setq bMV (vlax-make-variant
-                           (vlax-make-safearray vlax-vbDouble '(0 . 2))))
-               (vlax-invoke-method vla 'GetBoundingBox bmv bMV)
-               (setq bbox-min (vlax-safearray->list (vlax-variant-value bmv)))
-               (setq bbox-max (vlax-safearray->list (vlax-variant-value bMV)))
-               (setq min-x (car  bbox-min)
-                     oy    (cadr bbox-min)
-                     max-x (car  bbox-max))
-               (setq h-mag (/ (- max-x min-x)
-                               (abs (- sta-end sta-start))))
-               (setq v-mag (/ (- (cadr bbox-max) oy)
-                               (abs (- elev-max elev-min))))
-               (if (and (> h-mag 0) (> v-mag 0))
-                 (list (float min-x) (float oy)
-                       (float sta-start) (float elev-min)
-                       (float h-mag) (float v-mag) nil
-                       (float max-x))
+               (setq bb-lo (vlax-make-variant
+                             (vlax-make-safearray vlax-vbDouble '(0 . 2))))
+               (setq bb-hi (vlax-make-variant
+                             (vlax-make-safearray vlax-vbDouble '(0 . 2))))
+               (vlax-invoke-method vla 'GetBoundingBox bb-lo bb-hi)
+               (setq lo-x (car  (vlax-safearray->list (vlax-variant-value bb-lo)))
+                     lo-y (cadr (vlax-safearray->list (vlax-variant-value bb-lo)))
+                     hi-x (car  (vlax-safearray->list (vlax-variant-value bb-hi)))
+                     hi-y (cadr (vlax-safearray->list (vlax-variant-value bb-hi))))
+               (setq hm (/ (- hi-x lo-x) (abs (- sta-e sta-s))))
+               (setq vm (/ (- hi-y lo-y) (abs (- elv-x elv-n))))
+               (if (and (> hm 0) (> vm 0))
+                 (list (float lo-x) (float lo-y)
+                       (float sta-s) (float elv-n)
+                       (float hm) (float vm) nil
+                       (float hi-x))
                  nil)))))
       (if (vl-catch-all-error-p res)
         (progn (princ (strcat "\n  COM read error: " (vl-catch-all-error-message res))) nil)
