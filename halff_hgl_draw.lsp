@@ -23,10 +23,13 @@
 ;; One HGL polyline is drawn per profile view on the CURRENT active layer.
 ;; No new layers are created.
 ;;
-;; Design HGL stubs: for every non-empty DS/US Design HGL cell a
-;; separate 2-vertex polyline is drawn, centered on the pipe's DS or US
-;; station at the design elevation, extending 1.5 station-feet each
-;; side (3 ft total).  These are left for manual adjustment.
+;; Design HGL values are hydraulic jumps at the endpoints of the
+;; polyline and are woven into the main polyline as vertical segments:
+;;   DS Design HGL → added before the first DS HGL vertex (beginning)
+;;   US Design HGL → added after the last US HGL vertex (end)
+;; If a Design HGL appears at any station that is not the overall
+;; minimum (DS) or maximum (US) station of the profile view group,
+;; HGLDRAW reports an error and skips that profile view.
 ;;
 ;; Commands:
 ;;   HGLSET  - browse to and save the Excel file path
@@ -306,7 +309,7 @@
                     prev-h-denom prev-v-denom prev-dir
                     pts drow pipe ds-sta us-sta ds-design ds us us-design
                     lo-sta lo-hgl hi-sta hi-hgl lx ly hx hy cur-pt
-                    stub-cx stub-cy stub-half
+                    min-sta max-sta ds-design-val us-design-val design-err
                     echo-save origin dir-str)
 
   (vl-load-com)
@@ -442,71 +445,110 @@
           prev-h-denom cur-h-denom      prev-v-denom cur-v-denom
           prev-dir dir-str)
 
-    ;; Sort rows: L-R ascending by min station; R-L descending by max station
-    (setq pv-rows (vl-sort pv-rows
-      (if (< cur-h-scale 0)
-        '(lambda (a b) (> (max (nth 3 a) (nth 4 a)) (max (nth 3 b) (nth 4 b))))
-        '(lambda (a b) (< (min (nth 3 a) (nth 4 a)) (min (nth 3 b) (nth 4 b)))))))
+    ;; Compute overall station range for this profile view group.
+    ;; Used for Design HGL validation and for pre/post jump insertion.
+    (setq min-sta (apply 'min (mapcar '(lambda (r) (min (nth 3 r) (nth 4 r))) pv-rows)))
+    (setq max-sta (apply 'max (mapcar '(lambda (r) (max (nth 3 r) (nth 4 r))) pv-rows)))
 
-    ;; Build HGL point list
-    (setq pts '())
+    ;; Validate Design HGL positions.
+    ;; DS Design HGL must be at the DS station of the pipe that sits at
+    ;; the overall minimum station (the physical downstream end of the run).
+    ;; US Design HGL must be at the US station of the pipe at the maximum
+    ;; station (the physical upstream end).  Anything in the middle is a
+    ;; data error -- it would create an unconnectable jump inside the line.
+    (setq design-err nil ds-design-val nil us-design-val nil)
     (foreach drow pv-rows
-      (setq ds-sta (nth 3 drow)  us-sta (nth 4 drow)
-            ds     (nth 6 drow)  us     (nth 7 drow))
-
-      (if (<= ds-sta us-sta)
-        (setq lo-sta ds-sta  lo-hgl ds  hi-sta us-sta  hi-hgl us)
-        (setq lo-sta us-sta  lo-hgl us  hi-sta ds-sta  hi-hgl ds))
-
-      (setq lx (hgl:sta->x  lo-sta cur-sta-datum cur-ox cur-h-scale)
-            ly (hgl:elev->y lo-hgl cur-elev-datum cur-oy cur-v-scale)
-            hx (hgl:sta->x  hi-sta cur-sta-datum cur-ox cur-h-scale)
-            hy (hgl:elev->y hi-hgl cur-elev-datum cur-oy cur-v-scale))
-
-      (if (< cur-h-scale 0)
-        (progn  ;; R-L: hi-station end is leftmost in drawing
-          (setq cur-pt (list hx hy))
-          (if (or (null pts) (not (equal (last pts) cur-pt 1e-6)))
-            (setq pts (append pts (list cur-pt))))
-          (setq pts (append pts (list (list lx ly)))))
-        (progn  ;; L-R: lo-station end is leftmost
-          (setq cur-pt (list lx ly))
-          (if (or (null pts) (not (equal (last pts) cur-pt 1e-6)))
-            (setq pts (append pts (list cur-pt))))
-          (setq pts (append pts (list (list hx hy)))))))
-
-    ;; Draw HGL polyline
-    (if (>= (length pts) 2)
-      (progn
-        (princ (strcat "\n  Drawing HGL polyline: " (itoa (length pts)) " vertices"))
-        (command "._PLINE")
-        (foreach p pts (command p))
-        (command ""))
-      (princ "\n  WARNING: fewer than 2 points computed - skipping polyline."))
-
-    ;; Draw Design HGL stubs (3-ft horizontal line centered on the station)
-    (setq stub-half (* 1.5 (abs cur-h-scale)))
-    (foreach drow pv-rows
-      (setq ds-sta    (nth 3 drow)
-            us-sta    (nth 4 drow)
-            ds-design (nth 5 drow)
+      (setq ds-design (nth 5 drow)
             us-design (nth 8 drow))
-
       (if ds-design
-        (progn
-          (setq stub-cx (hgl:sta->x  ds-sta    cur-sta-datum  cur-ox cur-h-scale)
-                stub-cy (hgl:elev->y ds-design  cur-elev-datum cur-oy cur-v-scale))
-          (command "._PLINE"
-            (list (- stub-cx stub-half) stub-cy)
-            (list (+ stub-cx stub-half) stub-cy) "")))
-
+        (if (equal (nth 3 drow) min-sta 1e-4)
+          (setq ds-design-val ds-design)
+          (progn
+            (princ (strcat "\nERROR: DS Design HGL on pipe " (nth 0 drow)
+                           " (DS station " (rtos (nth 3 drow) 2 2)
+                           ") is not at the start of the line (min station "
+                           (rtos min-sta 2 2) "). Skipping \"" pv-name "\"."))
+            (setq design-err T))))
       (if us-design
-        (progn
-          (setq stub-cx (hgl:sta->x  us-sta    cur-sta-datum  cur-ox cur-h-scale)
-                stub-cy (hgl:elev->y us-design  cur-elev-datum cur-oy cur-v-scale))
-          (command "._PLINE"
-            (list (- stub-cx stub-half) stub-cy)
-            (list (+ stub-cx stub-half) stub-cy) ""))))
+        (if (equal (nth 4 drow) max-sta 1e-4)
+          (setq us-design-val us-design)
+          (progn
+            (princ (strcat "\nERROR: US Design HGL on pipe " (nth 0 drow)
+                           " (US station " (rtos (nth 4 drow) 2 2)
+                           ") is not at the end of the line (max station "
+                           (rtos max-sta 2 2) "). Skipping \"" pv-name "\"."))
+            (setq design-err T)))))
+
+    (if (not design-err)
+      (progn
+        ;; Sort rows: L-R ascending by min station; R-L descending by max station
+        (setq pv-rows (vl-sort pv-rows
+          (if (< cur-h-scale 0)
+            '(lambda (a b) (> (max (nth 3 a) (nth 4 a)) (max (nth 3 b) (nth 4 b))))
+            '(lambda (a b) (< (min (nth 3 a) (nth 4 a)) (min (nth 3 b) (nth 4 b)))))))
+
+        ;; Build main HGL point list (pipe-to-pipe run; jumps at manholes
+        ;; appear automatically because adjacent pipes have different HGL
+        ;; values at their shared station).
+        (setq pts '())
+        (foreach drow pv-rows
+          (setq ds-sta (nth 3 drow)  us-sta (nth 4 drow)
+                ds     (nth 6 drow)  us     (nth 7 drow))
+
+          (if (<= ds-sta us-sta)
+            (setq lo-sta ds-sta  lo-hgl ds  hi-sta us-sta  hi-hgl us)
+            (setq lo-sta us-sta  lo-hgl us  hi-sta ds-sta  hi-hgl ds))
+
+          (setq lx (hgl:sta->x  lo-sta cur-sta-datum cur-ox cur-h-scale)
+                ly (hgl:elev->y lo-hgl cur-elev-datum cur-oy cur-v-scale)
+                hx (hgl:sta->x  hi-sta cur-sta-datum cur-ox cur-h-scale)
+                hy (hgl:elev->y hi-hgl cur-elev-datum cur-oy cur-v-scale))
+
+          (if (< cur-h-scale 0)
+            (progn  ;; R-L: hi-station end is leftmost
+              (setq cur-pt (list hx hy))
+              (if (or (null pts) (not (equal (last pts) cur-pt 1e-6)))
+                (setq pts (append pts (list cur-pt))))
+              (setq pts (append pts (list (list lx ly)))))
+            (progn  ;; L-R: lo-station end is leftmost
+              (setq cur-pt (list lx ly))
+              (if (or (null pts) (not (equal (last pts) cur-pt 1e-6)))
+                (setq pts (append pts (list cur-pt))))
+              (setq pts (append pts (list (list hx hy)))))))
+
+        ;; Weave Design HGL jumps into the polyline endpoints.
+        ;; L-R: DS Design at min-sta is prepended; US Design at max-sta appended.
+        ;; R-L: directions swap because high station is the leftmost (first) vertex.
+        (if (< cur-h-scale 0)
+          (progn
+            (if us-design-val  ;; R-L beginning = max-sta = US end
+              (setq pts (cons
+                (list (hgl:sta->x  max-sta      cur-sta-datum  cur-ox cur-h-scale)
+                      (hgl:elev->y us-design-val cur-elev-datum cur-oy cur-v-scale))
+                pts)))
+            (if ds-design-val  ;; R-L end = min-sta = DS end
+              (setq pts (append pts
+                (list (list (hgl:sta->x  min-sta      cur-sta-datum  cur-ox cur-h-scale)
+                            (hgl:elev->y ds-design-val cur-elev-datum cur-oy cur-v-scale)))))))
+          (progn
+            (if ds-design-val  ;; L-R beginning = min-sta = DS end
+              (setq pts (cons
+                (list (hgl:sta->x  min-sta      cur-sta-datum  cur-ox cur-h-scale)
+                      (hgl:elev->y ds-design-val cur-elev-datum cur-oy cur-v-scale))
+                pts)))
+            (if us-design-val  ;; L-R end = max-sta = US end
+              (setq pts (append pts
+                (list (list (hgl:sta->x  max-sta      cur-sta-datum  cur-ox cur-h-scale)
+                            (hgl:elev->y us-design-val cur-elev-datum cur-oy cur-v-scale))))))))
+
+        ;; Draw the complete polyline
+        (if (>= (length pts) 2)
+          (progn
+            (princ (strcat "\n  Drawing HGL polyline: " (itoa (length pts)) " vertices"))
+            (command "._PLINE")
+            (foreach p pts (command p))
+            (command ""))
+          (princ "\n  WARNING: fewer than 2 points - skipping polyline."))))
 
   ) ;; end foreach pv-name
 
