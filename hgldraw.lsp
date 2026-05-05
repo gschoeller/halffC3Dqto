@@ -225,19 +225,12 @@
 ;; -------------------------------------------------------------------
 ;; CIVIL 3D PROFILE VIEW AUTO-READ
 ;;
-;; Strategy: GetBoundingBox returns the physical extents of the profile
-;; view in model space via SAFEARRAY by-ref params (the one COM pattern
-;; that works reliably in AutoLISP vlax).
+;; Uses GetBoundingBox (SAFEARRAY by-ref) to get physical extents,
+;; then derives scale magnitudes from bbox vs. station/elev span.
 ;;
-;; Returns list of 8 elements or nil:
-;;   0: min-x      = left edge X   (use as ox for L-R)
-;;   1: oy         = bottom edge Y (ElevationMin location)
-;;   2: sta-datum  = StationStart
-;;   3: elev-datum = ElevationMin
-;;   4: h-scale-mag = model units per station-ft, always positive
-;;   5: v-scale-mag = model units per elev-ft, always positive
-;;   6: nil         = direction unknown; user must confirm
-;;   7: max-x      = right edge X  (use as ox for R-L)
+;; Returns (ox oy sta-datum elev-datum h-scale-mag v-scale-mag nil max-x)
+;; or nil on failure. Index 4 and 5 are always positive magnitudes.
+;; Index 6 is nil (direction unknown). Index 7 is right-edge X.
 ;; -------------------------------------------------------------------
 
 (defun hgl:pv-read (ent / vla sta-start sta-end elev-min elev-max
@@ -258,16 +251,20 @@
                          (/= sta-start sta-end) (/= elev-min elev-max)))
              nil
              (progn
-               (setq bmv (vlax-make-variant (vlax-make-safearray vlax-vbDouble '(0 . 2))))
-               (setq bMV (vlax-make-variant (vlax-make-safearray vlax-vbDouble '(0 . 2))))
+               (setq bmv (vlax-make-variant
+                           (vlax-make-safearray vlax-vbDouble '(0 . 2))))
+               (setq bMV (vlax-make-variant
+                           (vlax-make-safearray vlax-vbDouble '(0 . 2))))
                (vlax-invoke-method vla 'GetBoundingBox bmv bMV)
                (setq bbox-min (vlax-safearray->list (vlax-variant-value bmv)))
                (setq bbox-max (vlax-safearray->list (vlax-variant-value bMV)))
                (setq min-x (car  bbox-min)
                      oy    (cadr bbox-min)
                      max-x (car  bbox-max))
-               (setq h-mag (/ (- max-x min-x) (abs (- sta-end sta-start))))
-               (setq v-mag (/ (- (cadr bbox-max) oy) (abs (- elev-max elev-min))))
+               (setq h-mag (/ (- max-x min-x)
+                               (abs (- sta-end sta-start))))
+               (setq v-mag (/ (- (cadr bbox-max) oy)
+                               (abs (- elev-max elev-min))))
                (if (and (> h-mag 0) (> v-mag 0))
                  (list (float min-x) (float oy)
                        (float sta-start) (float elev-min)
@@ -301,14 +298,14 @@
 ;; -------------------------------------------------------------------
 
 (defun c:HGLDRAW (/ xlsx data anno-scale pv-names pv-name pv-rows pv-ent pv-params
-                    cur-ox cur-oy cur-sta-datum cur-elev-datum cur-max-x
-                    cur-h-scale cur-v-scale cur-h-denom cur-v-denom cur-align
+                    cur-ox cur-oy cur-sta-datum cur-elev-datum
+                    cur-h-scale cur-v-scale cur-h-denom cur-v-denom cur-is-rl cur-align
                     prev-ox prev-oy prev-sta-datum prev-elev-datum
                     prev-h-denom prev-v-denom prev-dir
                     pts drow pipe ds-sta us-sta ds-design ds us us-design
                     lo-sta lo-hgl hi-sta hi-hgl lx ly hx hy cur-pt
                     min-sta max-sta ds-design-val us-design-val design-err
-                    echo-save origin dir-str style-v style-upper dir-hint)
+                    echo-save origin dir-str)
 
   (vl-load-com)
 
@@ -359,7 +356,7 @@
 
     ;; Try auto-read by name
     (setq pv-ent (hgl:find-pv-by-name pv-name))
-    (setq pv-params nil cur-h-scale nil cur-v-scale nil cur-max-x nil)
+    (setq pv-params nil cur-h-scale nil cur-v-scale nil cur-is-rl nil)
     (setq cur-ox prev-ox cur-oy prev-oy
           cur-sta-datum prev-sta-datum cur-elev-datum prev-elev-datum)
 
@@ -374,73 +371,46 @@
                   cur-elev-datum (nth 3 pv-params)
                   cur-h-scale   (nth 4 pv-params)
                   cur-v-scale   (nth 5 pv-params)
-                  cur-max-x     (nth 7 pv-params))
+                  cur-is-rl     (nth 6 pv-params))
             (princ "\n  Auto-read OK:")
-            (princ (strcat "\n    BBox L:    " (rtos cur-ox 2 4)))
-            (princ (strcat "\n    BBox R:    " (rtos cur-max-x 2 4)))
-            (princ (strcat "\n    BBox bot:  " (rtos cur-oy 2 4)))
+            (princ (strcat "\n    Origin:    (" (rtos cur-ox 2 2) ", " (rtos cur-oy 2 2) ")"))
             (princ (strcat "\n    Sta datum: " (rtos cur-sta-datum 2 2)))
             (princ (strcat "\n    Elev datum:" (rtos cur-elev-datum 2 2)))
-            (princ (strcat "\n    H-scale:   1\"=" (rtos (/ anno-scale cur-h-scale) 2 1) "'")))
+            (princ (strcat "\n    H-scale:   1\"=" (rtos (/ anno-scale (abs cur-h-scale)) 2 1) "'"))
+            (princ (strcat "\n    Direction: " (if cur-is-rl "R-to-L" "L-to-R"))))
           (princ (strcat "\n  Alignment \"" cur-align
                          "\": found profile view but COM read failed - enter manually."))))
       (princ (strcat "\n  Alignment \"" cur-align
                      "\": profile view not found in drawing - enter manually.")))
 
-    ;; Direction - prompt BEFORE origin so we can use the correct bbox edge.
-    ;; Hint from StyleName: if "R-L" or "R_L" appears in the style name, default R.
-    (setq dir-hint nil)
-    (if pv-ent
-      (progn
-        (setq style-v (vl-catch-all-apply 'vlax-get-property
-          (list (vlax-ename->vla-object pv-ent) 'StyleName)))
-        (if (not (vl-catch-all-error-p style-v))
-          (progn
-            (setq style-upper (strcase (vl-princ-to-string style-v)))
-            (setq dir-hint
-              (if (or (vl-string-search "R-L" style-upper)
-                      (vl-string-search "R_L" style-upper))
-                "R" "L"))))))
-    (setq dir-str (or dir-hint prev-dir))
-    (setq dir-str (hgl:trim (getstring
-      (strcat "\nDirection (L=left-to-right, R=right-to-left) <" dir-str ">: "))))
-    (if (= dir-str "") (setq dir-str (or dir-hint prev-dir)))
-    (setq dir-str (strcase dir-str))
-
-    ;; For R-L, StationStart is at the RIGHT edge of the bbox (max-x).
-    (if (and (= dir-str "R") cur-max-x)
-      (setq cur-ox cur-max-x))
-
     ;; Confirm / override: origin
     (if cur-ox
       (progn
         (setq origin (getpoint
-          (strcat "\nOrigin at StationStart ["
-                  (rtos cur-ox 2 4) "," (rtos cur-oy 2 4)
+          (strcat "\nOrigin [" (rtos cur-ox 2 2) "," (rtos cur-oy 2 2)
                   "] (Enter=keep, pick=override): ")))
         (if origin (setq cur-ox (car origin) cur-oy (cadr origin))))
       (progn
-        (setq origin (getpoint
-          "\nPick origin of profile view (point at StationStart, ElevationMin): "))
+        (setq origin (getpoint "\nPick bottom-left origin of profile view: "))
         (if (not origin)
           (progn (setvar "CMDECHO" echo-save) (princ "\nCancelled.") (exit)))
         (setq cur-ox (car origin) cur-oy (cadr origin))))
 
     ;; Datum station
     (if (not cur-sta-datum) (setq cur-sta-datum (if prev-sta-datum prev-sta-datum 0.0)))
-    (setq cur-sta-datum (hgl:prompt-real "Datum station (= StationStart)" cur-sta-datum))
+    (setq cur-sta-datum (hgl:prompt-real "Datum station (left edge of profile)" cur-sta-datum))
     (if (not cur-sta-datum)
       (progn (setvar "CMDECHO" echo-save) (princ "\nCancelled.") (exit)))
 
     ;; Datum elevation
     (if (not cur-elev-datum) (setq cur-elev-datum (if prev-elev-datum prev-elev-datum 0.0)))
-    (setq cur-elev-datum (hgl:prompt-real "Datum elevation (= ElevationMin)" cur-elev-datum))
+    (setq cur-elev-datum (hgl:prompt-real "Datum elevation (bottom of profile view)" cur-elev-datum))
     (if (not cur-elev-datum)
       (progn (setvar "CMDECHO" echo-save) (princ "\nCancelled.") (exit)))
 
-    ;; H-scale denominator (pre-filled from auto-read if available)
+    ;; H-scale denominator
     (setq cur-h-denom
-      (if cur-h-scale (/ anno-scale cur-h-scale) prev-h-denom))
+      (if cur-h-scale (/ anno-scale (abs cur-h-scale)) prev-h-denom))
     (setq cur-h-denom (hgl:prompt-real
       (strcat "H-scale denominator (e.g. 50 = 1\"=50'; scale 1:"
               (rtos anno-scale 2 0) " applied)")
@@ -448,7 +418,7 @@
     (if (not cur-h-denom)
       (progn (setvar "CMDECHO" echo-save) (princ "\nCancelled.") (exit)))
 
-    ;; V-scale denominator (pre-filled from auto-read if available)
+    ;; V-scale denominator
     (setq cur-v-denom
       (if cur-v-scale (/ anno-scale cur-v-scale) prev-v-denom))
     (setq cur-v-denom (hgl:prompt-real
@@ -458,7 +428,14 @@
     (if (not cur-v-denom)
       (progn (setvar "CMDECHO" echo-save) (princ "\nCancelled.") (exit)))
 
-    ;; Final model-space scales (direction sign applied here)
+    ;; Direction
+    (setq dir-str (if cur-is-rl "R" prev-dir))
+    (setq dir-str (hgl:trim (getstring
+      (strcat "\nDirection (L=left-to-right, R=right-to-left) <" dir-str ">: "))))
+    (if (= dir-str "") (setq dir-str (if cur-is-rl "R" prev-dir)))
+    (setq dir-str (strcase dir-str))
+
+    ;; Final model-space scales
     (setq cur-h-scale (/ anno-scale cur-h-denom))
     (setq cur-v-scale (/ anno-scale cur-v-denom))
     (if (= dir-str "R") (setq cur-h-scale (- cur-h-scale)))
@@ -640,7 +617,7 @@
 
 (defun c:HGLPVTEST (/ ent etype vla
                       pv-sta-s pv-sta-e pv-elv-n pv-elv-x
-                      pv-bmv pv-bMV pv-bbox-r pv-bmin pv-bmax pv-hsc pv-vsc)
+                      pv-xy1 pv-xy2 pv-xy3 pv-hsc pv-vsc)
 
   (vl-load-com)
 
@@ -687,40 +664,44 @@
   (hgl:probe-prop vla 'InsertionPoint)
   (hgl:probe-prop vla 'Origin)
 
-  ;; Test GetBoundingBox
-  (princ "\n\n--- Testing GetBoundingBox ---")
+  ;; Test FindXYAtStationAndElevation with the known station/elevation values
+  (princ "\n\n--- Testing FindXYAtStationAndElevation ---")
   (setq pv-sta-s (hgl:variant->val (vl-catch-all-apply 'vlax-get-property (list vla 'StationStart)))
         pv-sta-e (hgl:variant->val (vl-catch-all-apply 'vlax-get-property (list vla 'StationEnd)))
         pv-elv-n (hgl:variant->val (vl-catch-all-apply 'vlax-get-property (list vla 'ElevationMin)))
         pv-elv-x (hgl:variant->val (vl-catch-all-apply 'vlax-get-property (list vla 'ElevationMax))))
-  (setq pv-bmv (vlax-make-variant (vlax-make-safearray vlax-vbDouble '(0 . 2))))
-  (setq pv-bMV (vlax-make-variant (vlax-make-safearray vlax-vbDouble '(0 . 2))))
-  (setq pv-bbox-r (vl-catch-all-apply
-    'vlax-invoke-method (list vla 'GetBoundingBox pv-bmv pv-bMV)))
-  (if (vl-catch-all-error-p pv-bbox-r)
-    (princ (strcat "\n  GetBoundingBox ERROR: " (vl-catch-all-error-message pv-bbox-r)))
+  (if (and (hgl:num-p pv-sta-s) (hgl:num-p pv-sta-e)
+           (hgl:num-p pv-elv-n) (hgl:num-p pv-elv-x))
     (progn
-      (setq pv-bmin (vlax-safearray->list (vlax-variant-value pv-bmv)))
-      (setq pv-bmax (vlax-safearray->list (vlax-variant-value pv-bMV)))
-      (princ (strcat "\n  MinPoint: (" (rtos (car pv-bmin) 2 4)
-                     ", " (rtos (cadr pv-bmin) 2 4) ")"))
-      (princ (strcat "\n  MaxPoint: (" (rtos (car pv-bmax) 2 4)
-                     ", " (rtos (cadr pv-bmax) 2 4) ")"))
-      (if (and (hgl:num-p pv-sta-s) (hgl:num-p pv-sta-e)
-               (hgl:num-p pv-elv-n) (hgl:num-p pv-elv-x)
-               (/= pv-sta-s pv-sta-e) (/= pv-elv-n pv-elv-x))
+      (princ (strcat "\n  StaStart=" (rtos pv-sta-s 2 2)
+                     "  StaEnd=" (rtos pv-sta-e 2 2)
+                     "  ElevMin=" (rtos pv-elv-n 2 2)
+                     "  ElevMax=" (rtos pv-elv-x 2 2)))
+      (setq pv-xy1 (hgl:pv-find-xy vla pv-sta-s pv-elv-n)
+            pv-xy2 (hgl:pv-find-xy vla pv-sta-e pv-elv-n)
+            pv-xy3 (hgl:pv-find-xy vla pv-sta-s pv-elv-x))
+      (if pv-xy1
+        (princ (strcat "\n  FindXY(StaStart,ElevMin) = ("
+                       (rtos (car pv-xy1) 2 4) ", " (rtos (cadr pv-xy1) 2 4) ")"))
+        (princ "\n  FindXY(StaStart,ElevMin) = FAILED"))
+      (if pv-xy2
+        (princ (strcat "\n  FindXY(StaEnd,  ElevMin) = ("
+                       (rtos (car pv-xy2) 2 4) ", " (rtos (cadr pv-xy2) 2 4) ")"))
+        (princ "\n  FindXY(StaEnd,  ElevMin) = FAILED"))
+      (if pv-xy3
+        (princ (strcat "\n  FindXY(StaStart,ElevMax) = ("
+                       (rtos (car pv-xy3) 2 4) ", " (rtos (cadr pv-xy3) 2 4) ")"))
+        (princ "\n  FindXY(StaStart,ElevMax) = FAILED"))
+      (if (and pv-xy1 pv-xy2 pv-xy3 (/= pv-sta-s pv-sta-e) (/= pv-elv-n pv-elv-x))
         (progn
-          (setq pv-hsc (/ (- (car pv-bmax) (car pv-bmin))
-                          (abs (- pv-sta-e pv-sta-s))))
-          (setq pv-vsc (/ (- (cadr pv-bmax) (cadr pv-bmin))
-                          (abs (- pv-elv-x pv-elv-n))))
-          (princ (strcat "\n  h-scale: " (rtos pv-hsc 2 6) " model-units/ft"))
-          (princ (strcat "\n  v-scale: " (rtos pv-vsc 2 6) " model-units/ft"))
-          (princ "\n  L-R ox = MinPoint.X,  R-L ox = MaxPoint.X")
-          (if (and (> pv-hsc 0) (> pv-vsc 0))
-            (princ "\n  => GetBoundingBox SUCCEEDED - auto-read will work.")
-            (princ "\n  => Scales are zero/negative - check profile view.")))
-        (princ "\n  Cannot derive scales - station/elev props unavailable."))))
+          (setq pv-hsc (/ (- (car pv-xy2) (car pv-xy1)) (- pv-sta-e pv-sta-s)))
+          (setq pv-vsc (/ (- (cadr pv-xy3) (cadr pv-xy1)) (- pv-elv-x pv-elv-n)))
+          (princ (strcat "\n  => h-scale (model units/ft): " (rtos pv-hsc 2 6)))
+          (princ (strcat "\n  => v-scale (model units/ft): " (rtos pv-vsc 2 6)))
+          (princ (strcat "\n  => Direction: " (if (< pv-hsc 0) "R-to-L" "L-to-R")))
+          (princ "\n  => Auto-read WOULD SUCCEED with these values."))
+        (princ "\n  Cannot derive scales - one or more FindXY calls failed.")))
+    (princ "\n  StationStart/End or ElevationMin/Max unavailable - skipping test."))
 
   ;; Full COM dump
   (princ "\n\n--- Full COM object dump (vlax-dump-object) ---")
