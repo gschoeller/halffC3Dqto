@@ -225,20 +225,23 @@
 ;; -------------------------------------------------------------------
 ;; CIVIL 3D PROFILE VIEW AUTO-READ
 ;;
-;; Uses GetBoundingBox (SAFEARRAY by-ref) to get physical extents.
+;; GetBoundingBox returns physical extents via SAFEARRAY by-ref params.
+;; hgl:bbox-var is a top-level helper so vlax-make-safearray is never
+;; called from inside a quoted lambda (avoids VLisp compiler issues).
+;;
 ;; Returns (ox oy sta-datum elev-datum h-mag v-mag nil max-ox) or nil.
-;;   ox     = left edge X (use as origin for L-R)
-;;   max-ox = right edge X (use as origin for R-L)
-;;   h-mag, v-mag = always-positive scale magnitudes
-;;   nil at index 6 = direction unknown, user must confirm
 ;; -------------------------------------------------------------------
 
+(defun hgl:bbox-var ()
+  (vlax-make-variant (vlax-make-safearray vlax-vbDouble (cons 0 2))))
+
 (defun hgl:pv-read (ent / vla sta-s sta-e elv-n elv-x
-                          bb-lo bb-hi lo-x lo-y hi-x hi-y
-                          hm vm res)
+                          bb-lo bb-hi lo-x lo-y hi-x hi-y hm vm res)
   (if (/= (cdr (assoc 0 (entget ent))) "AECC_PROFILE_VIEW")
     (progn (princ "\n  Not an AECC_PROFILE_VIEW.") nil)
     (progn
+      (setq bb-lo (hgl:bbox-var))
+      (setq bb-hi (hgl:bbox-var))
       (setq res (vl-catch-all-apply
         '(lambda ()
            (setq vla (vlax-ename->vla-object ent))
@@ -251,10 +254,6 @@
                          (/= sta-s sta-e) (/= elv-n elv-x)))
              nil
              (progn
-               (setq bb-lo (vlax-make-variant
-                             (vlax-make-safearray vlax-vbDouble '(0 . 2))))
-               (setq bb-hi (vlax-make-variant
-                             (vlax-make-safearray vlax-vbDouble '(0 . 2))))
                (vlax-invoke-method vla 'GetBoundingBox bb-lo bb-hi)
                (setq lo-x (car  (vlax-safearray->list (vlax-variant-value bb-lo)))
                      lo-y (cadr (vlax-safearray->list (vlax-variant-value bb-lo)))
