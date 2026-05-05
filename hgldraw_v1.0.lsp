@@ -25,8 +25,8 @@
 ;;
 ;; Design HGL values are hydraulic jumps at the endpoints of the
 ;; polyline and are woven into the main polyline as vertical segments:
-;;   DS Design HGL → added before the first DS HGL vertex (beginning)
-;;   US Design HGL → added after the last US HGL vertex (end)
+;;   DS Design HGL -> added before the first DS HGL vertex (beginning)
+;;   US Design HGL -> added after the last US HGL vertex (end)
 ;; If a Design HGL appears at any station that is not the overall
 ;; minimum (DS) or maximum (US) station of the profile view group,
 ;; HGLDRAW reports an error and skips that profile view.

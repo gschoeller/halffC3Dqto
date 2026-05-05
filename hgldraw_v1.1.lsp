@@ -26,9 +26,9 @@
 ;; Design HGL values are hydraulic jumps at the endpoints of the
 ;; polyline and are woven into the main polyline as vertical segments
 ;; with a 3-ft horizontal extension outward:
-;;   DS Design HGL → outer stub at (min-sta - 1.5), junction at min-sta,
+;;   DS Design HGL -> outer stub at (min-sta - 1.5), junction at min-sta,
 ;;                   then vertical jump up/down to first HGL vertex
-;;   US Design HGL → vertical jump from last HGL vertex, junction at max-sta,
+;;   US Design HGL -> vertical jump from last HGL vertex, junction at max-sta,
 ;;                   then outer stub at (max-sta + 1.5)
 ;; If a Design HGL appears at any station that is not the overall
 ;; minimum (DS) or maximum (US) station of the profile view group,

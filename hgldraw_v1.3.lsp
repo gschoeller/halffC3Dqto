@@ -26,9 +26,9 @@
 ;; Design HGL values are hydraulic jumps at the endpoints of the
 ;; polyline and are woven into the main polyline as vertical segments
 ;; with a 3-ft horizontal extension outward:
-;;   DS Design HGL → outer stub at (min-sta - 1.5), junction at min-sta,
+;;   DS Design HGL -> outer stub at (min-sta - 1.5), junction at min-sta,
 ;;                   then vertical jump up/down to first HGL vertex
-;;   US Design HGL → vertical jump from last HGL vertex, junction at max-sta,
+;;   US Design HGL -> vertical jump from last HGL vertex, junction at max-sta,
 ;;                   then outer stub at (max-sta + 1.5)
 ;; If a Design HGL appears at any station that is not the overall
 ;; minimum (DS) or maximum (US) station of the profile view group,
@@ -234,14 +234,14 @@
 ;;
 ;; Return format (8 elements):
 ;;   (min-x oy sta-datum elev-datum h-scale-mag v-scale-mag nil max-x)
-;;   0: min-x      = left edge X  → use as ox for L-R
+;;   0: min-x      = left edge X  -> use as ox for L-R
 ;;   1: oy         = bottom edge Y (= ElevationMin location)
 ;;   2: sta-datum  = StationStart
 ;;   3: elev-datum = ElevationMin
 ;;   4: h-scale-mag = |model units / station-ft|, always positive
 ;;   5: v-scale-mag = |model units / elev-ft|, always positive
 ;;   6: nil        = direction unknown (user must confirm)
-;;   7: max-x      = right edge X → use as ox for R-L
+;;   7: max-x      = right edge X -> use as ox for R-L
 ;; -------------------------------------------------------------------
 
 (defun hgl:pv-read (ent / vla sta-start sta-end elev-min elev-max
