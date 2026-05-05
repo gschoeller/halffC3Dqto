@@ -719,8 +719,8 @@
         (progn
           (setq pv-hsc (/ (- (car pv-bmax) (car pv-bmin)) (abs (- pv-sta-e pv-sta-s))))
           (setq pv-vsc (/ (- (cadr pv-bmax) (cadr pv-bmin)) (abs (- pv-elv-x pv-elv-n))))
-          (princ (strcat "\n  Derived |h-scale|: " (rtos pv-hsc 2 6) " model-units/ft"))
-          (princ (strcat "\n  Derived |v-scale|: " (rtos pv-vsc 2 6) " model-units/ft"))
+          (princ (strcat "\n  Derived h-scale: " (rtos pv-hsc 2 6) " model-units/ft"))
+          (princ (strcat "\n  Derived v-scale: " (rtos pv-vsc 2 6) " model-units/ft"))
           (princ "\n  L-R origin (MinPoint.X used if L-R):  ox = MinPoint.X")
           (princ "\n  R-L origin (MaxPoint.X used if R-L):  ox = MaxPoint.X")
           (if (and (> pv-hsc 0) (> pv-vsc 0))
