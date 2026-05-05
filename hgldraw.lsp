@@ -230,7 +230,25 @@
 ;; called from inside a quoted lambda (avoids VLisp compiler issues).
 ;;
 ;; Returns (ox oy sta-datum elev-datum h-mag v-mag nil max-ox) or nil.
+;; hgl:pv-find-xy kept for HGLPVTEST compatibility.
 ;; -------------------------------------------------------------------
+
+(defun hgl:pv-find-xy (vla station elevation / xv yv okv res xval yval)
+  (setq xv  (vlax-make-variant 0.0 vlax-vbDouble)
+        yv  (vlax-make-variant 0.0 vlax-vbDouble)
+        okv (vlax-make-variant :vlax-false vlax-vbBoolean))
+  (setq res (vl-catch-all-apply
+    'vlax-invoke-method
+    (list vla 'FindXYAtStationAndElevation
+          (float station) (float elevation) xv yv okv)))
+  (if (vl-catch-all-error-p res)
+    nil
+    (progn
+      (setq xval (vlax-variant-value xv)
+            yval (vlax-variant-value yv))
+      (if (and (hgl:num-p xval) (hgl:num-p yval))
+        (list (float xval) (float yval))
+        nil))))
 
 (defun hgl:bbox-var ()
   (vlax-make-variant (vlax-make-safearray vlax-vbDouble (cons 0 2))))
