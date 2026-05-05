@@ -599,6 +599,22 @@
   (princ))
 
 ;; -------------------------------------------------------------------
+;; HGLPVTEST helpers - top-level so strcat/symbol issues are avoided
+;; -------------------------------------------------------------------
+
+(defun hgl:probe-prop (obj pname / r pstr)
+  ;; pname may be a symbol or string; convert for display
+  (setq pstr (if (= (type pname) 'STR) pname (vl-princ-to-string pname)))
+  (setq r (vl-catch-all-apply 'vlax-get-property (list obj pname)))
+  (if (vl-catch-all-error-p r)
+    (progn
+      (princ (strcat "\n    " pstr ": ERROR - " (vl-catch-all-error-message r)))
+      nil)
+    (progn
+      (princ (strcat "\n    " pstr ": " (vl-princ-to-string r)))
+      r)))
+
+;; -------------------------------------------------------------------
 ;; HGLPVTEST - diagnostic command to debug COM read failures
 ;;
 ;; Select any AECC_PROFILE_VIEW entity and this command will:
@@ -608,19 +624,9 @@
 ;;   3. Call vlax-dump-object for a full COM property/method listing
 ;; -------------------------------------------------------------------
 
-(defun c:HGLPVTEST (/ ent etype vla probe-prop props-to-try pname raw-val err-msg)
+(defun c:HGLPVTEST (/ ent etype vla)
 
   (vl-load-com)
-
-  (defun probe-prop (obj pname / r)
-    (setq r (vl-catch-all-apply 'vlax-get-property (list obj pname)))
-    (if (vl-catch-all-error-p r)
-      (progn
-        (princ (strcat "\n    " pname ": ERROR - " (vl-catch-all-error-message r)))
-        nil)
-      (progn
-        (princ (strcat "\n    " pname ": " (vl-princ-to-string r)))
-        r)))
 
   (princ "\nHGLPVTEST: Select a profile view entity...")
   (setq ent (car (entsel "\nSelect profile view: ")))
@@ -646,34 +652,34 @@
   (princ "\n\n--- Probing properties used by HGLDRAW ---")
 
   (princ "\n  [Name]")
-  (probe-prop vla 'Name)
+  (hgl:probe-prop vla 'Name)
 
   (princ "\n  [Origin / insertion point - tries Location, InsertionPoint, Origin]")
-  (probe-prop vla 'Location)
-  (probe-prop vla 'InsertionPoint)
-  (probe-prop vla 'Origin)
+  (hgl:probe-prop vla 'Location)
+  (hgl:probe-prop vla 'InsertionPoint)
+  (hgl:probe-prop vla 'Origin)
 
   (princ "\n  [Datum station - tries StationStart, StartStation]")
-  (probe-prop vla 'StationStart)
-  (probe-prop vla 'StartStation)
+  (hgl:probe-prop vla 'StationStart)
+  (hgl:probe-prop vla 'StartStation)
 
   (princ "\n  [Datum elevation - tries ElevationMin, MinimumElevation, DatumElevation]")
-  (probe-prop vla 'ElevationMin)
-  (probe-prop vla 'MinimumElevation)
-  (probe-prop vla 'DatumElevation)
+  (hgl:probe-prop vla 'ElevationMin)
+  (hgl:probe-prop vla 'MinimumElevation)
+  (hgl:probe-prop vla 'DatumElevation)
 
   (princ "\n  [H-scale - tries HorizontalScale, GraphScale]")
-  (probe-prop vla 'HorizontalScale)
-  (probe-prop vla 'GraphScale)
+  (hgl:probe-prop vla 'HorizontalScale)
+  (hgl:probe-prop vla 'GraphScale)
 
   (princ "\n  [V-scale - tries VerticalScale, VerticalExaggeration]")
-  (probe-prop vla 'VerticalScale)
-  (probe-prop vla 'VerticalExaggeration)
+  (hgl:probe-prop vla 'VerticalScale)
+  (hgl:probe-prop vla 'VerticalExaggeration)
 
   (princ "\n  [R-L direction - tries SwapedViewDirection, IsReversed, IsFlipped]")
-  (probe-prop vla 'SwapedViewDirection)
-  (probe-prop vla 'IsReversed)
-  (probe-prop vla 'IsFlipped)
+  (hgl:probe-prop vla 'SwapedViewDirection)
+  (hgl:probe-prop vla 'IsReversed)
+  (hgl:probe-prop vla 'IsFlipped)
 
   ;; Full COM dump
   (princ "\n\n--- Full COM object dump (vlax-dump-object) ---")
