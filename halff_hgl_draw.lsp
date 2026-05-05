@@ -1,33 +1,36 @@
 ;; =====================================================================
 ;; HGL Profile Polyline - halff_hgl_draw.lsp
 ;;
-;; Excel columns: A=Pipe, B=DS Station, C=US Station,
-;;                D=DS HGL, E=US HGL, F=Design Station (ignored).
-;;                Row 1 = header; data starts row 2.
+;; Excel columns (row 1 = header, data starts row 2):
+;;   A: Pipe
+;;   B: Alignment
+;;   C: Profile View Name
+;;   D: DS Station
+;;   E: US Station
+;;   F: DS Design HGL  (optional; drawn as a 3-ft horizontal stub)
+;;   G: DS HGL
+;;   H: US HGL
+;;   I: US Design HGL  (optional; drawn as a 3-ft horizontal stub)
+;;
+;; HGLDRAW processes ALL profile views in the Excel in one run.
+;; Rows are grouped by Profile View Name (col C).  For each group the
+;; routine tries to locate the matching AECC_PROFILE_VIEW entity in the
+;; drawing by name and auto-read its parameters; falling back to manual
+;; entry if the entity is not found or COM read fails.  Parameters
+;; (scales, datums) carry over as defaults between views so you only
+;; need to re-type values that differ.
+;;
+;; One HGL polyline is drawn per profile view on the CURRENT active layer.
+;; No new layers are created.
+;;
+;; Design HGL stubs: for every non-empty DS/US Design HGL cell a
+;; separate 2-vertex polyline is drawn, centered on the pipe's DS or US
+;; station at the design elevation, extending 1.5 station-feet each
+;; side (3 ft total).  These are left for manual adjustment.
 ;;
 ;; Commands:
-;;   HGLSET  - browse to and save the Excel file path (stored in a
-;;             .hglpath sidecar file next to the DWG)
-;;   HGLDRAW - read Excel, optionally auto-read a Civil 3D profile view
-;;             for origin/datum/scale, prompt for any missing values,
-;;             draw the HGL as a polyline
-;;
-;; Civil 3D integration (HGLDRAW step 3):
-;;   Select an AECC_PROFILE_VIEW entity to attempt auto-read of:
-;;     Location / InsertionPoint -> world XY of the bottom-left corner
-;;     StationStart              -> station value at the left edge
-;;     ElevationMin              -> datum elevation at the bottom
-;;     HorizontalScale           -> real-units per drawing-unit (inverted)
-;;     VerticalScale             -> real-units per drawing-unit (inverted)
-;;   All values are displayed and can be confirmed or overridden.
-;;   Press Enter at the entity prompt to skip to fully manual entry.
-;;
-;; Direction handling:
-;;   Pipes are sorted by their lower station value before point-building,
-;;   so the spreadsheet order does not matter.  For each pipe, whichever
-;;   station is smaller is treated as the DS end regardless of which
-;;   column it appears in.  Shared nodes between adjacent pipes are
-;;   de-duplicated so the polyline has no doubled vertices.
+;;   HGLSET  - browse to and save the Excel file path
+;;   HGLDRAW - read Excel, draw all HGL polylines and Design HGL stubs
 ;; =====================================================================
 
 (vl-load-com)
@@ -136,13 +139,17 @@
 
 ;; -------------------------------------------------------------------
 ;; READ HGL DATA FROM EXCEL
-;; Returns list of (pipe ds-sta us-sta ds-hgl us-hgl).
-;; Col F (Design Station) is present in the sheet but not read.
-;; Stops on the first row with an empty DS Station cell (col B).
+;;
+;; Returns a list of rows:
+;;   (pipe align pv-name ds-sta us-sta ds-design ds-hgl us-hgl us-design)
+;;   Index:  0     1      2       3       4         5        6      7      8
+;;
+;; ds-design (col F) and us-design (col I) may be nil.
+;; Stops on the first row with an empty DS Station cell (col D).
 ;; -------------------------------------------------------------------
 
 (defun hgl:read-excel (xlsx / pair xl wb ws nrows row data
-                             pipe ds-sta us-sta ds us)
+                             pipe align pv ds-sta us-sta ds-design ds us us-design)
   (setq data nil)
   (setq pair (hgl:xl-open xlsx))
   (if (not pair)
@@ -153,109 +160,121 @@
       (setq nrows (hgl:used-rows ws))
       (setq row 2)
       (while (<= row nrows)
-        (setq ds-sta (hgl:cell-num ws row 2)) ;; col B: DS Station
+        (setq ds-sta (hgl:cell-num ws row 4))  ;; col D: DS Station
         (if (not ds-sta)
           (setq row (1+ nrows))
           (progn
-            (setq pipe   (hgl:cell-str ws row 1)
-                  us-sta (hgl:cell-num ws row 3) ;; col C: US Station
-                  ds     (hgl:cell-num ws row 4) ;; col D: DS HGL
-                  us     (hgl:cell-num ws row 5)) ;; col E: US HGL
-                  ;; col F: Design Station - not read
+            (setq pipe      (hgl:cell-str ws row 1)   ;; A: Pipe
+                  align     (hgl:cell-str ws row 2)   ;; B: Alignment
+                  pv        (hgl:cell-str ws row 3)   ;; C: Profile View Name
+                  us-sta    (hgl:cell-num ws row 5)   ;; E: US Station
+                  ds-design (hgl:cell-num ws row 6)   ;; F: DS Design HGL
+                  ds        (hgl:cell-num ws row 7)   ;; G: DS HGL
+                  us        (hgl:cell-num ws row 8)   ;; H: US HGL
+                  us-design (hgl:cell-num ws row 9))  ;; I: US Design HGL
             (if (and us-sta ds us)
-              (setq data (append data (list (list pipe ds-sta us-sta ds us)))))
+              (setq data (append data
+                (list (list pipe align pv ds-sta us-sta ds-design ds us us-design)))))
             (setq row (1+ row)))))
       (hgl:xl-close xl wb)
       data)))
 
 ;; -------------------------------------------------------------------
+;; GET UNIQUE PROFILE VIEW NAMES in order of first appearance
+;; -------------------------------------------------------------------
+
+(defun hgl:unique-pv-names (data / names drow pv)
+  (setq names '())
+  (foreach drow data
+    (setq pv (hgl:trim (nth 2 drow)))
+    (if (and (/= pv "") (not (member pv names)))
+      (setq names (append names (list pv)))))
+  names)
+
+;; -------------------------------------------------------------------
+;; FIND AECC_PROFILE_VIEW ENTITY BY NAME (case-insensitive)
+;; Returns the ename or nil.
+;; -------------------------------------------------------------------
+
+(defun hgl:find-pv-by-name (pv-name / ss idx ent vla name-val found)
+  (setq ss (ssget "X" '((0 . "AECC_PROFILE_VIEW"))))
+  (setq found nil)
+  (if ss
+    (progn
+      (setq idx 0)
+      (while (and (< idx (sslength ss)) (not found))
+        (setq ent (ssname ss idx))
+        (setq vla (vl-catch-all-apply 'vlax-ename->vla-object (list ent)))
+        (if (not (vl-catch-all-error-p vla))
+          (progn
+            (setq name-val (vl-catch-all-apply 'vlax-get-property (list vla 'Name)))
+            (if (and (not (vl-catch-all-error-p name-val))
+                     (= (strcase (hgl:trim (vl-princ-to-string name-val)))
+                        (strcase pv-name)))
+              (setq found ent))))
+        (setq idx (1+ idx)))))
+  found)
+
+;; -------------------------------------------------------------------
 ;; CIVIL 3D PROFILE VIEW AUTO-READ
 ;;
 ;; Reads origin, datum station, datum elevation, scales, and direction
-;; from an AECC_PROFILE_VIEW entity.
+;; from an AECC_PROFILE_VIEW entity via COM.
 ;;
-;; HorizontalScale / VerticalScale are real-units-per-drawing-unit
-;; (e.g. 50 for 1"=50'), so we invert them.
+;; SwapedViewDirection (Civil 3D's own typo) = T means right-to-left.
+;; h-scale is returned negative for R-L profiles.
 ;;
-;; SwapedViewDirection (Civil 3D's own typo) is T when the profile runs
-;; right-to-left.  For R-L profiles h-scale is returned negative so the
-;; coordinate transform X = ox + (sta - sta-datum) * h-scale places each
-;; station correctly: higher stations map to smaller X (left in drawing).
-;;
-;; Multiple property name candidates accommodate different API versions.
-;;
-;; Returns (origin-x origin-y sta-datum elev-datum h-scale v-scale is-rl)
-;; where is-rl is T for right-to-left profiles, nil for left-to-right.
-;; Returns nil if the entity is not a profile view or properties fail.
+;; Returns (ox oy sta-datum elev-datum h-scale v-scale is-rl) or nil.
 ;; -------------------------------------------------------------------
 
 (defun hgl:pv-read (ent / vla loc ox oy sta-start elev-min h-raw v-raw rl-raw is-rl res)
   (if (/= (cdr (assoc 0 (entget ent))) "AECC_PROFILE_VIEW")
-    (progn (princ "\n  Not an AECC_PROFILE_VIEW - skipping auto-read.") nil)
+    (progn (princ "\n  Not an AECC_PROFILE_VIEW.") nil)
     (progn
       (setq res (vl-catch-all-apply
         '(lambda ()
            (setq vla (vlax-ename->vla-object ent))
 
-           ;; Origin - bottom-left corner in world coordinates
            (setq loc (hgl:try-prop vla '(Location InsertionPoint Origin)))
            (if (= (type loc) 'VARIANT) (setq loc (vlax-variant-value loc)))
            (cond
              ((= (type loc) 'SAFEARRAY)
               (setq ox (vlax-safearray-get-element loc 0)
                     oy (vlax-safearray-get-element loc 1)))
-             ((listp loc)
-              (setq ox (car loc) oy (cadr loc)))
+             ((listp loc) (setq ox (car loc) oy (cadr loc)))
              (T (setq ox nil oy nil)))
 
-           ;; Station value at the left edge of the view
            (setq sta-start (hgl:try-prop vla '(StationStart StartStation)))
            (if (and sta-start (= (type sta-start) 'VARIANT))
              (setq sta-start (vlax-variant-value sta-start)))
 
-           ;; Elevation at the bottom of the view
            (setq elev-min (hgl:try-prop vla '(ElevationMin MinimumElevation DatumElevation)))
            (if (and elev-min (= (type elev-min) 'VARIANT))
              (setq elev-min (vlax-variant-value elev-min)))
 
-           ;; Horizontal scale (real-units per drawing-unit -> invert)
            (setq h-raw (hgl:try-prop vla '(HorizontalScale GraphScale)))
-           (if (and h-raw (= (type h-raw) 'VARIANT))
-             (setq h-raw (vlax-variant-value h-raw)))
+           (if (and h-raw (= (type h-raw) 'VARIANT)) (setq h-raw (vlax-variant-value h-raw)))
 
-           ;; Vertical scale (real-units per drawing-unit -> invert)
            (setq v-raw (hgl:try-prop vla '(VerticalScale VerticalExaggeration)))
-           (if (and v-raw (= (type v-raw) 'VARIANT))
-             (setq v-raw (vlax-variant-value v-raw)))
+           (if (and v-raw (= (type v-raw) 'VARIANT)) (setq v-raw (vlax-variant-value v-raw)))
 
-           ;; Direction: SwapedViewDirection = T means right-to-left (Civil 3D typo is intentional)
            (setq rl-raw (hgl:try-prop vla '(SwapedViewDirection IsReversed IsFlipped)))
-           (if (and rl-raw (= (type rl-raw) 'VARIANT))
-             (setq rl-raw (vlax-variant-value rl-raw)))
+           (if (and rl-raw (= (type rl-raw) 'VARIANT)) (setq rl-raw (vlax-variant-value rl-raw)))
            (setq is-rl (cond
              ((= rl-raw :vlax-true) T)
              ((eq rl-raw T) T)
              ((and rl-raw (hgl:num-p rl-raw) (/= rl-raw 0)) T)
              (T nil)))
 
-           (if (and ox oy
-                    (hgl:num-p sta-start)
-                    (hgl:num-p elev-min)
+           (if (and ox oy (hgl:num-p sta-start) (hgl:num-p elev-min)
                     (and h-raw (hgl:num-p h-raw) (> h-raw 0))
                     (and v-raw (hgl:num-p v-raw) (> v-raw 0)))
-             (list ox oy
-                   (float sta-start) (float elev-min)
-                   ;; Negative h-scale encodes R-L direction for the transform
+             (list ox oy (float sta-start) (float elev-min)
                    (if is-rl (- (/ 1.0 h-raw)) (/ 1.0 h-raw))
-                   (/ 1.0 v-raw)
-                   is-rl)
+                   (/ 1.0 v-raw) is-rl)
              nil))))
-
       (if (vl-catch-all-error-p res)
-        (progn
-          (princ (strcat "\n  Profile view read error: "
-                         (vl-catch-all-error-message res)))
-          nil)
+        (progn (princ (strcat "\n  COM read error: " (vl-catch-all-error-message res))) nil)
         res))))
 
 ;; -------------------------------------------------------------------
@@ -269,8 +288,7 @@
   (+ oy (* (- elev elev-datum) v-scale)))
 
 ;; -------------------------------------------------------------------
-;; GETREAL WITH DEFAULT
-;; Returns nil on Escape; returns default when user presses Enter.
+;; GETREAL WITH DEFAULT  (returns default on Enter, nil on Escape)
 ;; -------------------------------------------------------------------
 
 (defun hgl:prompt-real (msg default / v)
@@ -278,25 +296,18 @@
   (if v v default))
 
 ;; -------------------------------------------------------------------
-;; ENSURE LAYER EXISTS (green, continuous)
-;; -------------------------------------------------------------------
-
-(defun hgl:ensure-layer (lname)
-  (if (not (tblsearch "LAYER" lname))
-    (entmake (list '(0 . "LAYER")
-                   '(100 . "AcDbSymbolTableRecord")
-                   '(100 . "AcDbLayerTableRecord")
-                   (cons 2 lname) '(70 . 0) '(62 . 3) '(6 . "Continuous")))))
-
-;; -------------------------------------------------------------------
 ;; MAIN DRAW COMMAND
 ;; -------------------------------------------------------------------
 
-(defun c:HGLDRAW (/ xlsx data ent pv-data anno-scale
-                    ox oy sta-datum elev-datum h-scale v-scale h-denom v-denom is-rl layer
-                    pts row pipe ds-sta us-sta ds us
-                    lo-sta lo-hgl hi-sta hi-hgl lx ly hx hy
-                    cur-pt echo-save ent-hgl origin dir-str)
+(defun c:HGLDRAW (/ xlsx data anno-scale pv-names pv-name pv-rows pv-ent pv-params
+                    cur-ox cur-oy cur-sta-datum cur-elev-datum
+                    cur-h-scale cur-v-scale cur-h-denom cur-v-denom cur-is-rl
+                    prev-ox prev-oy prev-sta-datum prev-elev-datum
+                    prev-h-denom prev-v-denom prev-dir
+                    pts drow pipe ds-sta us-sta ds-design ds us us-design
+                    lo-sta lo-hgl hi-sta hi-hgl lx ly hx hy cur-pt
+                    stub-cx stub-cy stub-half
+                    echo-save origin dir-str)
 
   (vl-load-com)
 
@@ -306,184 +317,201 @@
     (progn
       (setq xlsx (getfiled "Select HGL Excel File" "" "xlsx;xls" 0))
       (if xlsx (hgl:set-excel-path xlsx))))
-  (if (not xlsx)
-    (progn (princ "\nCancelled.") (exit)))
+  (if (not xlsx) (progn (princ "\nCancelled.") (exit)))
 
   ;; 2. Read Excel --------------------------------------------------
   (princ (strcat "\nReading: " xlsx))
   (setq data (hgl:read-excel xlsx))
-  (if (not data)
-    (progn (princ "\nERROR: No valid HGL data found in Excel.") (exit)))
-  (princ (strcat "\nRead " (itoa (length data)) " pipe row(s)."))
+  (if (not data) (progn (princ "\nERROR: No valid HGL data found in Excel.") (exit)))
+  (setq pv-names (hgl:unique-pv-names data))
+  (princ (strcat "\nRead " (itoa (length data)) " pipe row(s) across "
+                 (itoa (length pv-names)) " profile view(s):"))
+  (foreach pv-name pv-names (princ (strcat "\n  " pv-name)))
 
-  ;; Civil 3D drawing scale (set in Toolspace > Drawing Settings).
-  ;; This is NOT the AutoCAD annotation scale - they are independent.
-  ;; Enter the denominator: 20 for 1:20, 50 for 1:50, etc.
-  ;; Profile view paper scales are divided by this to reach model coords.
+  ;; 3. Drawing scale (one value applies to the whole drawing) -------
   (setq anno-scale (hgl:prompt-real
     "Civil 3D drawing scale denominator (e.g. 20 for 1:20)"
     (max 1.0 (getvar "CANNOSCALEVALUE"))))
   (if (not anno-scale) (progn (princ "\nCancelled.") (exit)))
 
-  ;; 3. Civil 3D profile view auto-read (optional) ------------------
-  (princ "\n--- Profile View Parameters ---")
-  (princ "\nSelect Civil 3D Profile View to auto-read parameters")
-  (princ "\n  (press Enter or Esc to skip and enter values manually): ")
-  (setq ent (car (entsel "")))
-  (setq pv-data nil ox nil oy nil sta-datum nil elev-datum nil
-        h-scale nil v-scale nil is-rl nil)
-  (if ent
-    (progn
-      (setq pv-data (hgl:pv-read ent))
-      (if pv-data
-        (progn
-          (setq ox         (nth 0 pv-data)
-                oy         (nth 1 pv-data)
-                sta-datum  (nth 2 pv-data)
-                elev-datum (nth 3 pv-data)
-                h-scale    (nth 4 pv-data)  ; negative when R-L
-                v-scale    (nth 5 pv-data)
-                is-rl      (nth 6 pv-data))
-          (princ "\n  Auto-read from profile view:")
-          (princ (strcat "\n    Origin:        (" (rtos ox 2 4) ", " (rtos oy 2 4) ")"))
-          (princ (strcat "\n    Datum station: " (rtos sta-datum 2 4)))
-          (princ (strcat "\n    Datum elev:    " (rtos elev-datum 2 4)))
-          ;; Back-calculate the paper denominator so the user sees a familiar "1\"=50'" value.
-          ;; formula: denom = anno-scale / |h-scale|  (e.g. 20 / 0.4 = 50)
-          (princ (strcat "\n    H-scale:       1\"=" (rtos (/ anno-scale (abs h-scale)) 2 1) "'"))
-          (princ (strcat "\n    V-scale:       1\"=" (rtos (/ anno-scale v-scale) 2 1) "'"))
-          (princ (strcat "\n    Direction:     "
-                         (if is-rl "Right-to-Left" "Left-to-Right")))
-          (princ "\n  Press Enter to accept each value or type a new one."))
-        (princ "\n  Could not auto-read - enter values manually."))))
+  ;; 4. Carry-over defaults (populated after each profile view) ------
+  (setq prev-ox nil prev-oy nil prev-sta-datum nil prev-elev-datum nil
+        prev-h-denom 50.0 prev-v-denom 10.0 prev-dir "L")
 
-  ;; 4. Confirm / override each parameter ---------------------------
-
-  ;; Origin
-  (if ox
-    (progn
-      (setq origin (getpoint (strcat "\nOrigin [" (rtos ox 2 2)
-                                     "," (rtos oy 2 2) "] (Enter=keep, or pick): ")))
-      (if origin (setq ox (car origin) oy (cadr origin))))
-    (progn
-      (setq origin (getpoint "\nPick bottom-left origin of profile view: "))
-      (if (not origin) (progn (princ "\nCancelled.") (exit)))
-      (setq ox (car origin) oy (cadr origin))))
-
-  (if (not sta-datum)  (setq sta-datum 0.0))
-  (setq sta-datum (hgl:prompt-real
-    "Datum station (station value at left edge of profile)" sta-datum))
-  (if (not sta-datum) (progn (princ "\nCancelled.") (exit)))
-
-  (if (not elev-datum) (setq elev-datum 0.0))
-  (setq elev-datum (hgl:prompt-real
-    "Datum elevation (elevation at bottom of profile view)" elev-datum))
-  (if (not elev-datum) (progn (princ "\nCancelled.") (exit)))
-
-  ;; H and V scale denominators.
-  ;; Enter the number after "1 inch equals" from the profile view properties
-  ;; (e.g. 50 for 1"=50', 100 for 1"=100').  The annotation scale
-  ;; (1:{anno-scale}) is multiplied in automatically so the result lands in
-  ;; model-space drawing units.  Formula: model_scale = anno_scale / denom.
-  ;; If auto-read succeeded, the denominator is back-calculated from the API
-  ;; value so you can verify it looks right before accepting.
-  (setq h-denom (if h-scale (/ anno-scale (abs h-scale)) 50.0))
-  (setq h-denom (hgl:prompt-real
-    (strcat "H-scale denominator (e.g. 50 = 1\"=50'; scale 1:"
-            (rtos anno-scale 2 0) " applied automatically)")
-    h-denom))
-  (if (not h-denom) (progn (princ "\nCancelled.") (exit)))
-
-  (setq v-denom (if v-scale (/ anno-scale v-scale) 10.0))
-  (setq v-denom (hgl:prompt-real
-    (strcat "V-scale denominator (e.g. 10 = 1\"=10'; scale 1:"
-            (rtos anno-scale 2 0) " applied automatically)")
-    v-denom))
-  (if (not v-denom) (progn (princ "\nCancelled.") (exit)))
-
-  ;; Direction: L-to-R (normal) or R-to-L.
-  ;; Default comes from auto-read flag; otherwise L-to-R.
-  (setq dir-str (hgl:trim (getstring
-    (strcat "\nProfile direction (L=left-to-right, R=right-to-left) <"
-            (if is-rl "R" "L") ">: "))))
-  (if (= dir-str "") (setq dir-str (if is-rl "R" "L")))
-  (setq dir-str (strcase dir-str))
-
-  ;; Compute final model-space scales: anno_scale / denom, signed for direction.
-  (setq h-scale (/ anno-scale h-denom))
-  (setq v-scale (/ anno-scale v-denom))
-  (if (= dir-str "R") (setq h-scale (- h-scale)))
-
-  ;; 5. Layer -------------------------------------------------------
-  (setq layer (getstring "\nLayer name for HGL polyline <HGL>: "))
-  (if (or (not layer) (= (hgl:trim layer) "")) (setq layer "HGL"))
-  (hgl:ensure-layer layer)
-
-  ;; 6. Build point list --------------------------------------------
-  ;; For L-R: sort ascending by min station so the polyline builds left→right.
-  ;; For R-L: sort descending by max station so it builds left→right in world
-  ;;   coords (high station = left side of drawing when h-scale is negative).
-  ;; Either way, the negative h-scale in the transform maps stations to the
-  ;; correct world X, and shared-node deduplication compares world coords.
-  (setq data (vl-sort data
-    (if (< h-scale 0)
-      '(lambda (a b) (> (max (nth 1 a) (nth 2 a)) (max (nth 1 b) (nth 2 b))))
-      '(lambda (a b) (< (min (nth 1 a) (nth 2 a)) (min (nth 1 b) (nth 2 b)))))))
-
-  (setq pts '())
-  (foreach row data
-    (setq ds-sta (nth 1 row)
-          us-sta (nth 2 row)
-          ds     (nth 3 row)
-          us     (nth 4 row))
-
-    ;; Split into lo-station and hi-station ends.
-    ;; Col B=DS Station is normally the lower station; guard either way.
-    (if (<= ds-sta us-sta)
-      (setq lo-sta ds-sta  lo-hgl ds  hi-sta us-sta  hi-hgl us)
-      (setq lo-sta us-sta  lo-hgl us  hi-sta ds-sta  hi-hgl ds))
-
-    (setq lx (hgl:sta->x  lo-sta sta-datum ox h-scale)
-          ly (hgl:elev->y lo-hgl elev-datum oy v-scale)
-          hx (hgl:sta->x  hi-sta sta-datum ox h-scale)
-          hy (hgl:elev->y hi-hgl elev-datum oy v-scale))
-
-    ;; Append in the order that traces the polyline left-to-right in
-    ;; world coordinates and keeps shared nodes contiguous.
-    ;; L-R: lo-station end has smaller world X -> append lo then hi.
-    ;; R-L: hi-station end has smaller world X (negative h-scale) -> append hi then lo.
-    (if (< h-scale 0)
-      (progn
-        (setq cur-pt (list hx hy))
-        (if (or (null pts) (not (equal (last pts) cur-pt 1e-6)))
-          (setq pts (append pts (list cur-pt))))
-        (setq pts (append pts (list (list lx ly)))))
-      (progn
-        (setq cur-pt (list lx ly))
-        (if (or (null pts) (not (equal (last pts) cur-pt 1e-6)))
-          (setq pts (append pts (list cur-pt))))
-        (setq pts (append pts (list (list hx hy)))))))
-
-  (if (< (length pts) 2)
-    (progn (princ "\nERROR: Fewer than 2 points computed - check Excel data.") (exit)))
-
-  (princ (strcat "\nDrawing HGL polyline with " (itoa (length pts))
-                 " vertices on layer \"" layer "\"..."))
-
-  ;; 7. Draw polyline -----------------------------------------------
+  ;; Suppress PLINE command echo for all drawing calls
   (setq echo-save (getvar "CMDECHO"))
   (setvar "CMDECHO" 0)
-  (command "._PLINE")
-  (foreach p pts (command p))
-  (command "")
+
+  ;; 5. Loop over each profile view ---------------------------------
+  (foreach pv-name pv-names
+
+    ;; Rows for this profile view
+    (setq pv-rows (vl-remove-if-not
+      '(lambda (r) (= (hgl:trim (nth 2 r)) pv-name))
+      data))
+    (princ (strcat "\n\n--- Profile View: \"" pv-name "\" ("
+                   (itoa (length pv-rows)) " pipe(s)) ---"))
+
+    ;; Try auto-read by name
+    (setq pv-ent (hgl:find-pv-by-name pv-name))
+    (setq pv-params nil cur-h-scale nil cur-v-scale nil cur-is-rl nil)
+    (setq cur-ox prev-ox cur-oy prev-oy
+          cur-sta-datum prev-sta-datum cur-elev-datum prev-elev-datum)
+
+    (if pv-ent
+      (progn
+        (setq pv-params (hgl:pv-read pv-ent))
+        (if pv-params
+          (progn
+            (setq cur-ox        (nth 0 pv-params)
+                  cur-oy        (nth 1 pv-params)
+                  cur-sta-datum (nth 2 pv-params)
+                  cur-elev-datum (nth 3 pv-params)
+                  cur-h-scale   (nth 4 pv-params)
+                  cur-v-scale   (nth 5 pv-params)
+                  cur-is-rl     (nth 6 pv-params))
+            (princ "\n  Auto-read OK:")
+            (princ (strcat "\n    Origin:    (" (rtos cur-ox 2 2) ", " (rtos cur-oy 2 2) ")"))
+            (princ (strcat "\n    Sta datum: " (rtos cur-sta-datum 2 2)))
+            (princ (strcat "\n    Elev datum:" (rtos cur-elev-datum 2 2)))
+            (princ (strcat "\n    H-scale:   1\"=" (rtos (/ anno-scale (abs cur-h-scale)) 2 1) "'"))
+            (princ (strcat "\n    Direction: " (if cur-is-rl "R-to-L" "L-to-R"))))
+          (princ (strcat "\n  Found but COM read failed - enter manually."))))
+      (princ (strcat "\n  \"" pv-name "\" not found in drawing - enter manually.")))
+
+    ;; Confirm / override: origin
+    (if cur-ox
+      (progn
+        (setq origin (getpoint
+          (strcat "\nOrigin [" (rtos cur-ox 2 2) "," (rtos cur-oy 2 2)
+                  "] (Enter=keep, pick=override): ")))
+        (if origin (setq cur-ox (car origin) cur-oy (cadr origin))))
+      (progn
+        (setq origin (getpoint "\nPick bottom-left origin of profile view: "))
+        (if (not origin)
+          (progn (setvar "CMDECHO" echo-save) (princ "\nCancelled.") (exit)))
+        (setq cur-ox (car origin) cur-oy (cadr origin))))
+
+    ;; Datum station
+    (if (not cur-sta-datum) (setq cur-sta-datum (if prev-sta-datum prev-sta-datum 0.0)))
+    (setq cur-sta-datum (hgl:prompt-real "Datum station (left edge of profile)" cur-sta-datum))
+    (if (not cur-sta-datum)
+      (progn (setvar "CMDECHO" echo-save) (princ "\nCancelled.") (exit)))
+
+    ;; Datum elevation
+    (if (not cur-elev-datum) (setq cur-elev-datum (if prev-elev-datum prev-elev-datum 0.0)))
+    (setq cur-elev-datum (hgl:prompt-real "Datum elevation (bottom of profile view)" cur-elev-datum))
+    (if (not cur-elev-datum)
+      (progn (setvar "CMDECHO" echo-save) (princ "\nCancelled.") (exit)))
+
+    ;; H-scale denominator
+    (setq cur-h-denom
+      (if cur-h-scale (/ anno-scale (abs cur-h-scale)) prev-h-denom))
+    (setq cur-h-denom (hgl:prompt-real
+      (strcat "H-scale denominator (e.g. 50 = 1\"=50'; scale 1:"
+              (rtos anno-scale 2 0) " applied)")
+      cur-h-denom))
+    (if (not cur-h-denom)
+      (progn (setvar "CMDECHO" echo-save) (princ "\nCancelled.") (exit)))
+
+    ;; V-scale denominator
+    (setq cur-v-denom
+      (if cur-v-scale (/ anno-scale cur-v-scale) prev-v-denom))
+    (setq cur-v-denom (hgl:prompt-real
+      (strcat "V-scale denominator (e.g. 10 = 1\"=10'; scale 1:"
+              (rtos anno-scale 2 0) " applied)")
+      cur-v-denom))
+    (if (not cur-v-denom)
+      (progn (setvar "CMDECHO" echo-save) (princ "\nCancelled.") (exit)))
+
+    ;; Direction
+    (setq dir-str (if cur-is-rl "R" prev-dir))
+    (setq dir-str (hgl:trim (getstring
+      (strcat "\nDirection (L=left-to-right, R=right-to-left) <" dir-str ">: "))))
+    (if (= dir-str "") (setq dir-str (if cur-is-rl "R" prev-dir)))
+    (setq dir-str (strcase dir-str))
+
+    ;; Final model-space scales
+    (setq cur-h-scale (/ anno-scale cur-h-denom))
+    (setq cur-v-scale (/ anno-scale cur-v-denom))
+    (if (= dir-str "R") (setq cur-h-scale (- cur-h-scale)))
+
+    ;; Update carry-over defaults for the next profile view
+    (setq prev-ox cur-ox         prev-oy cur-oy
+          prev-sta-datum cur-sta-datum  prev-elev-datum cur-elev-datum
+          prev-h-denom cur-h-denom      prev-v-denom cur-v-denom
+          prev-dir dir-str)
+
+    ;; Sort rows: L-R ascending by min station; R-L descending by max station
+    (setq pv-rows (vl-sort pv-rows
+      (if (< cur-h-scale 0)
+        '(lambda (a b) (> (max (nth 3 a) (nth 4 a)) (max (nth 3 b) (nth 4 b))))
+        '(lambda (a b) (< (min (nth 3 a) (nth 4 a)) (min (nth 3 b) (nth 4 b)))))))
+
+    ;; Build HGL point list
+    (setq pts '())
+    (foreach drow pv-rows
+      (setq ds-sta (nth 3 drow)  us-sta (nth 4 drow)
+            ds     (nth 6 drow)  us     (nth 7 drow))
+
+      (if (<= ds-sta us-sta)
+        (setq lo-sta ds-sta  lo-hgl ds  hi-sta us-sta  hi-hgl us)
+        (setq lo-sta us-sta  lo-hgl us  hi-sta ds-sta  hi-hgl ds))
+
+      (setq lx (hgl:sta->x  lo-sta cur-sta-datum cur-ox cur-h-scale)
+            ly (hgl:elev->y lo-hgl cur-elev-datum cur-oy cur-v-scale)
+            hx (hgl:sta->x  hi-sta cur-sta-datum cur-ox cur-h-scale)
+            hy (hgl:elev->y hi-hgl cur-elev-datum cur-oy cur-v-scale))
+
+      (if (< cur-h-scale 0)
+        (progn  ;; R-L: hi-station end is leftmost in drawing
+          (setq cur-pt (list hx hy))
+          (if (or (null pts) (not (equal (last pts) cur-pt 1e-6)))
+            (setq pts (append pts (list cur-pt))))
+          (setq pts (append pts (list (list lx ly)))))
+        (progn  ;; L-R: lo-station end is leftmost
+          (setq cur-pt (list lx ly))
+          (if (or (null pts) (not (equal (last pts) cur-pt 1e-6)))
+            (setq pts (append pts (list cur-pt))))
+          (setq pts (append pts (list (list hx hy)))))))
+
+    ;; Draw HGL polyline
+    (if (>= (length pts) 2)
+      (progn
+        (princ (strcat "\n  Drawing HGL polyline: " (itoa (length pts)) " vertices"))
+        (command "._PLINE")
+        (foreach p pts (command p))
+        (command ""))
+      (princ "\n  WARNING: fewer than 2 points computed - skipping polyline."))
+
+    ;; Draw Design HGL stubs (3-ft horizontal line centered on the station)
+    (setq stub-half (* 1.5 (abs cur-h-scale)))
+    (foreach drow pv-rows
+      (setq ds-sta    (nth 3 drow)
+            us-sta    (nth 4 drow)
+            ds-design (nth 5 drow)
+            us-design (nth 8 drow))
+
+      (if ds-design
+        (progn
+          (setq stub-cx (hgl:sta->x  ds-sta    cur-sta-datum  cur-ox cur-h-scale)
+                stub-cy (hgl:elev->y ds-design  cur-elev-datum cur-oy cur-v-scale))
+          (command "._PLINE"
+            (list (- stub-cx stub-half) stub-cy)
+            (list (+ stub-cx stub-half) stub-cy) "")))
+
+      (if us-design
+        (progn
+          (setq stub-cx (hgl:sta->x  us-sta    cur-sta-datum  cur-ox cur-h-scale)
+                stub-cy (hgl:elev->y us-design  cur-elev-datum cur-oy cur-v-scale))
+          (command "._PLINE"
+            (list (- stub-cx stub-half) stub-cy)
+            (list (+ stub-cx stub-half) stub-cy) ""))))
+
+  ) ;; end foreach pv-name
+
   (setvar "CMDECHO" echo-save)
-
-  ;; 8. Assign layer ------------------------------------------------
-  (setq ent-hgl (entlast))
-  (entmod (subst (cons 8 layer) (assoc 8 (entget ent-hgl)) (entget ent-hgl)))
-  (entupd ent-hgl)
-
-  (princ (strcat "\nHGL polyline drawn on layer: " layer))
+  (princ "\nHGLDRAW complete.")
   (princ))
 
 ;; -------------------------------------------------------------------
@@ -503,6 +531,6 @@
 (princ "\n+-------------------------------------------+")
 (princ "\n|  HGL Draw Routine Loaded                  |")
 (princ "\n|  HGLSET  - Set Excel file path            |")
-(princ "\n|  HGLDRAW - Draw HGL polyline from Excel   |")
+(princ "\n|  HGLDRAW - Draw all HGL polylines         |")
 (princ "\n+-------------------------------------------+")
 (princ)
