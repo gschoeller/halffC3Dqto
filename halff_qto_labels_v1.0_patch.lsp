@@ -32,7 +32,8 @@
           (sssetfirst nil dup)
           (princ (strcat "\nOK Found " (itoa (sslength dup))
                          " duplicated objects. Selected duplicates.")))
-        (princ "\nOK No duplicates found."))))
+        (princ "\nOK No duplicates found."))
+      ))
   (princ))
 
 
@@ -85,8 +86,9 @@
               (setq idx (if (< idx (1- n)) (1+ idx) 0))))
           (if prevObj
             (vl-catch-all-apply 'vla-Highlight (list prevObj :vlax-false)))
-          (princ "\nQFAILSEARCH ended.")))
-          )
+          (princ "\nQFAILSEARCH ended."))
+        ))
+      )
   (princ))
 
 ;; ===========================================
