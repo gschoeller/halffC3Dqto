@@ -1,106 +1,198 @@
 ;;; ============================================================
-;;; findreplace.lsp
-;;; AutoCAD / Civil3D Find & Replace for TEXT and MTEXT entities
+;;; findreplace.lsp  (v2)
+;;; AutoCAD / Civil3D — Find & Replace across drawing text entities
+;;;
+;;; Supported entity types
+;;;   TEXT        plain single-line text             (DXF 1)
+;;;   MTEXT       multiline / formatted text         (DXF 1)
+;;;   DIMENSION   user override text only            (DXF 1; skips "<>" / empty)
+;;;   ATTRIB      attribute value in a block ref     (DXF 1)
+;;;   ATTDEF      attribute definition (template)    (DXF 1)
+;;;   MULTILEADER MLeader carrying MTEXT content     (ActiveX TextString)
+;;;   LEADER      annotation text is a separate MTEXT/TEXT entity and is
+;;;               therefore picked up by those filters automatically
+;;;
+;;; Civil3D label-style annotations (AECC_* proxy entities) use a
+;;; different DXF entity name and are excluded by the ssget filter.
+;;; Change those through the Label Style Composer instead.
+;;;
+;;; Highlighting: AutoCAD's native selection glow (redraw modes 3 / 4).
+;;; No entity color properties are ever read or written, so no color
+;;; save/restore is required and no colors are left changed if the
+;;; session is interrupted.
+;;;
+;;; Progress: each replacement is committed immediately when you choose
+;;; Replace.  Pressing ESC at any prompt keeps every replacement made
+;;; so far — nothing is rolled back.
+;;;
+;;; MTEXT width: after a replacement the text-box width is auto-expanded
+;;; to the content's natural (un-wrapped) width, preventing the longer
+;;; replacement word from forcing the next word onto a new line.
+;;; Hard paragraph breaks (\P) are respected; only soft wrap is removed.
 ;;;
 ;;; Load via APPLOAD (or drag-drop into the drawing window),
 ;;; then type FINDREPLACE at the Command prompt.
-;;;
-;;; Workflow
-;;;   1. Prompt for a search string
-;;;   2. Collect every TEXT / MTEXT entity whose content
-;;;      contains the search string (case-insensitive)
-;;;   3. Highlight all matches in yellow (color index 2)
-;;;   4. Prompt for a replacement string
-;;;   5. Step through each match one at a time:
-;;;        Zoom in, display current text, ask Replace / Keep / ESC
 ;;; ============================================================
 
+(vl-load-com)
 
-;;; ---- String helpers ----------------------------------------
 
-;;; Returns T if NEEDLE appears anywhere in HAYSTACK
-;;; (case-insensitive)
+;;; ════════════════════════════════════════════════════════════
+;;; String utilities
+;;; ════════════════════════════════════════════════════════════
+
 (defun fr:strfind (needle haystack)
-  (not (null (vl-string-search (strcase needle)
-                               (strcase haystack))))
+  ;; T when NEEDLE appears anywhere in HAYSTACK, case-insensitive
+  (not (null (vl-string-search (strcase needle) (strcase haystack))))
 )
 
-;;; Replaces every case-insensitive occurrence of NEEDLE with
-;;; REPLACEMENT inside STR, preserving the original casing of
-;;; surrounding characters (important for MTEXT formatting codes).
-(defun fr:strreplaceall (needle replacement str
-                         / nlen pos result rest)
+(defun fr:strreplaceall (needle replacement str / nlen pos result rest)
+  ;; Replace every case-insensitive occurrence of NEEDLE with REPLACEMENT.
+  ;; The unchanged prefix before each match is taken from the original STR,
+  ;; so MTEXT inline formatting codes that bracket the match are preserved.
   (setq nlen   (strlen needle)
         result ""
         rest   str)
-  (while (setq pos (vl-string-search (strcase needle)
-                                     (strcase rest)))
-    ;; Append the unchanged prefix, then the replacement text.
-    ;; (substr rest 1 pos) pulls from the original, preserving case.
+  (while (setq pos (vl-string-search (strcase needle) (strcase rest)))
     (setq result (strcat result (substr rest 1 pos) replacement)
           rest   (substr rest (+ pos nlen 1)))
   )
-  (strcat result rest)    ; append any trailing characters
+  (strcat result rest)
 )
 
 
-;;; ---- Entity helpers ----------------------------------------
+;;; ════════════════════════════════════════════════════════════
+;;; Entity text — get / set
+;;; ════════════════════════════════════════════════════════════
 
-;;; Return the raw text string of a TEXT or MTEXT entity.
-;;; For MTEXT this includes inline formatting codes.
-(defun fr:gettext (ent)
-  (cdr (assoc 1 (entget ent)))
-)
+(defun fr:gettext (ent / etype txt obj res)
+  ;; Return the searchable text content of ENT, or nil when the entity
+  ;; carries no user-editable text (DIMENSION with auto-measurement,
+  ;; MLeader with block content, empty MLeader, etc.).
+  (setq etype (cdr (assoc 0 (entget ent))))
+  (cond
+    ;; Plain DXF-group-1 entities
+    ((member etype '("TEXT" "MTEXT" "ATTRIB" "ATTDEF"))
+     (cdr (assoc 1 (entget ent))))
 
-;;; Return the entity's current color index.
-;;; Returns 256 (BYLAYER) when no explicit color is stored.
-(defun fr:getcolor (ent / pair)
-  (setq pair (assoc 62 (entget ent)))
-  (if pair (cdr pair) 256)
-)
+    ;; DIMENSION: only when the user has supplied an override string.
+    ;; An empty string or "<>" means "show the measured value" — skip it.
+    ((= etype "DIMENSION")
+     (setq txt (cdr (assoc 1 (entget ent))))
+     (if (and txt (/= txt "") (/= txt "<>")) txt nil))
 
-;;; Set COLOR-VAL on ENT.  Pass 256 to restore BYLAYER
-;;; (removes group 62 so the entity inherits the layer color).
-(defun fr:setcolor (ent colorval / dxf)
-  (setq dxf (entget ent)
-        dxf (vl-remove (assoc 62 dxf) dxf))   ; strip existing color
-  (if (/= colorval 256)
-    (setq dxf (append dxf (list (cons 62 colorval))))
+    ;; MULTILEADER: access via ActiveX so we don't have to parse the
+    ;; deeply-nested MLEADERCONTEXT DXF structure.
+    ;; Returns nil for block-content leaders and on any ActiveX error.
+    ((= etype "MULTILEADER")
+     (setq obj (vlax-ename->vla-object ent)
+           res (vl-catch-all-apply 'vla-get-textstring (list obj)))
+     (if (or (vl-catch-all-error-p res) (= res "")) nil res))
+
+    (T nil)
   )
-  (entmod dxf)
-  (entupd ent)
 )
 
-;;; Write NEWSTR back into ENT (works for both TEXT and MTEXT).
-(defun fr:settext (ent newstr / dxf)
-  (setq dxf (entget ent))
-  (entmod (subst (cons 1 newstr) (assoc 1 dxf) dxf))
-  (entupd ent)
+(defun fr:settext (ent newstr / etype dxf obj)
+  ;; Write NEWSTR back into ENT (handles all supported types).
+  (setq etype (cdr (assoc 0 (entget ent))))
+  (cond
+    ((member etype '("TEXT" "MTEXT" "ATTRIB" "ATTDEF" "DIMENSION"))
+     (setq dxf (entget ent))
+     (entmod (subst (cons 1 newstr) (assoc 1 dxf) dxf))
+     (entupd ent))
+    ((= etype "MULTILEADER")
+     (setq obj (vlax-ename->vla-object ent))
+     (vl-catch-all-apply 'vla-put-textstring (list obj newstr))
+     (entupd ent))
+  )
 )
 
 
-;;; ---- Viewport helper ---------------------------------------
+;;; ════════════════════════════════════════════════════════════
+;;; Visual highlight — selection glow, zero color-property changes
+;;; ════════════════════════════════════════════════════════════
 
-;;; Zoom to ENT with generous padding around its bounding box.
-;;; Falls back to ZOOM Object when getboundingbox is unavailable.
+(defun fr:highlight   (ent) (redraw ent 3))   ; blue/white selection glow
+(defun fr:dehighlight (ent) (redraw ent 4))   ; remove glow
+
+(defun fr:dehighlightfrom (lst start-idx / i)
+  ;; Remove glow from every entity in LST at position >= START-IDX.
+  (setq i start-idx)
+  (while (< i (length lst))
+    (fr:dehighlight (nth i lst))
+    (setq i (1+ i))
+  )
+)
+
+
+;;; ════════════════════════════════════════════════════════════
+;;; MTEXT width auto-adjustment
+;;; ════════════════════════════════════════════════════════════
+
+(defun fr:fixmtextwidth (ent / dxf widpair curw obj minpt maxpt natw)
+  ;; Widen the MTEXT box to the content's natural (un-wrapped) width.
+  ;; Steps:
+  ;;   1. Temporarily set DXF 41 (box width) to 0 — no constraint
+  ;;   2. Measure the actual rendered width via vla-getboundingbox
+  ;;   3. Lock that natural width back into DXF 41
+  ;; This eliminates soft wrap caused by the replacement being longer
+  ;; than the original.  Hard \P paragraph breaks are unaffected.
+  (setq dxf     (entget ent)
+        widpair (assoc 41 dxf)
+        curw    (if widpair (cdr widpair) 0.0))
+  (if (> curw 0.0)
+    (progn
+      ;; Release width constraint
+      (entmod (subst (cons 41 0.0) widpair dxf))
+      (entupd ent)
+      (setq obj (vlax-ename->vla-object ent))
+      (if (not (vl-catch-all-error-p
+                  (vl-catch-all-apply 'vla-getboundingbox
+                                      (list obj 'minpt 'maxpt))))
+        ;; Bounding box succeeded — set natural width
+        (progn
+          (setq natw (- (car (vlax-safearray->list maxpt))
+                        (car (vlax-safearray->list minpt))))
+          (entmod (subst (cons 41 natw)
+                         (assoc 41 (entget ent))
+                         (entget ent)))
+          (entupd ent)
+        )
+        ;; Bounding box call failed — restore the original width
+        (progn
+          (entmod (subst (cons 41 curw)
+                         (assoc 41 (entget ent))
+                         (entget ent)))
+          (entupd ent)
+        )
+      )
+    )
+  )
+)
+
+
+;;; ════════════════════════════════════════════════════════════
+;;; Viewport zoom to a single entity
+;;; ════════════════════════════════════════════════════════════
+
 (defun fr:zooment (ent / obj minpt maxpt dx dy pad ss)
+  ;; Zoom to ENT with generous padding.  Falls back to ZOOM Object
+  ;; if getboundingbox is unavailable for this entity type.
   (setq obj (vlax-ename->vla-object ent))
   (if (not (vl-catch-all-error-p
               (vl-catch-all-apply 'vla-getboundingbox
                                   (list obj 'minpt 'maxpt))))
-    ;; Bounding box succeeded – build a padded window
     (progn
       (setq minpt (vlax-safearray->list minpt)
             maxpt (vlax-safearray->list maxpt)
             dx    (- (car  maxpt) (car  minpt))
             dy    (- (cadr maxpt) (cadr minpt))
-            ;; Padding = 75 % of the longer dimension, minimum 0.1
             pad   (* (max dx dy 0.1) 0.75))
       (command "_.ZOOM" "_W"
                (list (- (car  minpt) pad) (- (cadr minpt) pad))
                (list (+ (car  maxpt) pad) (+ (cadr maxpt) pad)))
     )
-    ;; Fallback – ZOOM Object on a one-item selection set
     (progn
       (setq ss (ssadd ent (ssadd)))
       (command "_.ZOOM" "_O" ss "")
@@ -109,51 +201,32 @@
 )
 
 
-;;; ---- Color restore helper ----------------------------------
-
-;;; Restore original colors for every entity in MATCH-LIST
-;;; whose index is >= START-IDX.
-(defun fr:restorecolors (match-list colors start-idx / i)
-  (setq i start-idx)
-  (while (< i (length match-list))
-    (fr:setcolor (nth i match-list) (nth i colors))
-    (setq i (1+ i))
-  )
-)
-
-
-;;; ---- Main command ------------------------------------------
+;;; ════════════════════════════════════════════════════════════
+;;; Main command
+;;; ════════════════════════════════════════════════════════════
 
 (defun c:FINDREPLACE
        (/ searchstr replstr ss slen idx ent
-          colors match-list total choice
-          textval newtext done)
+          match-list total choice textval newtext done)
 
   (vl-load-com)
   (princ "\n=== FINDREPLACE ===")
 
-  ;; ----------------------------------------------------------
-  ;; Step 1 – Search string
-  ;; T as first argument to getstring permits embedded spaces.
-  ;; ----------------------------------------------------------
+  ;; ── Step 1: Search string ──────────────────────────────────────────────
+  ;; T allows spaces within the entered string.
   (setq searchstr (getstring T "\nEnter search string: "))
 
-  (if (= searchstr "")
+  (if (not (= searchstr ""))
 
-    ;; Nothing entered – abort cleanly
-    (princ "\nNo search string entered. Exiting.")
+    (progn   ; ← skip everything below on empty input
 
-    ;; --------------------------------------------------------
-    ;; Main body (wrapped so we can skip it on empty input)
-    ;; --------------------------------------------------------
-    (progn
-
-      ;; -------------------------------------------------------
-      ;; Step 2 – Collect matching entities from ALL spaces
-      ;; "_X" flag = search entire database (model + all layouts)
-      ;; -------------------------------------------------------
+      ;; ── Step 2: Collect matching entities ───────────────────────────────
+      ;; "_X" searches the entire drawing database: model space + all layouts.
+      ;; The DXF-0 filter string lists every supported type; anything not in
+      ;; that list (including Civil3D AECC_* proxies) is silently skipped.
       (setq match-list '())
-      (setq ss (ssget "_X" '((0 . "TEXT,MTEXT"))))
+      (setq ss (ssget "_X"
+                  '((0 . "TEXT,MTEXT,DIMENSION,ATTRIB,ATTDEF,MULTILEADER"))))
 
       (if ss
         (progn
@@ -167,45 +240,33 @@
             )
             (setq idx (1+ idx))
           )
-          (setq match-list (reverse match-list)) ; preserve draw order
+          (setq match-list (reverse match-list))   ; preserve draw order
         )
       )
 
       (setq total (length match-list))
 
-      ;; -------------------------------------------------------
-      ;; No matches found
-      ;; -------------------------------------------------------
       (if (= total 0)
 
-        (princ (strcat "\nNo matches found for: \""
-                       searchstr "\". Exiting."))
+        ;; ── No matches ────────────────────────────────────────────────────
+        (princ (strcat "\nNo matches found for: \"" searchstr "\"."))
 
-        ;; -----------------------------------------------------
-        ;; Matches found – highlight, collect originals
-        ;; -----------------------------------------------------
+        ;; ── Matches found ─────────────────────────────────────────────────
         (progn
 
-          ;; Save original colors then paint all matches yellow
-          (setq colors '())
-          (foreach ent match-list
-            (setq colors (append colors (list (fr:getcolor ent))))
-            (fr:setcolor ent 2)   ; 2 = yellow
-          )
+          ;; Apply selection glow to every match — no color properties touched
+          (foreach ent match-list (fr:highlight ent))
 
-          (princ (strcat "\nFound "
-                         (itoa total)
+          (princ (strcat "\nFound " (itoa total)
                          " match(es). Press Enter to continue..."))
-          (getstring "")           ; pause for user to inspect
+          (getstring "")
 
-          ;; ---------------------------------------------------
-          ;; Step 3 – Replacement string
-          ;; ---------------------------------------------------
+          ;; ── Step 3: Replacement string ──────────────────────────────────
           (setq replstr (getstring T "\nEnter replacement string: "))
 
-          ;; ---------------------------------------------------
-          ;; Step 4 – Review loop (one entity at a time)
-          ;; ---------------------------------------------------
+          ;; ── Step 4: One-by-one review loop ──────────────────────────────
+          ;; Each Replace is committed immediately.  ESC at any point keeps
+          ;; all replacements already made.
           (setq idx  0
                 done nil)
 
@@ -214,54 +275,60 @@
             (setq ent     (nth idx match-list)
                   textval (fr:gettext ent))
 
-            ;; Zoom to the current entity
+            ;; Zoom in; re-apply glow in case the screen refresh cleared it
             (fr:zooment ent)
+            (fr:highlight ent)
 
-            ;; Show position counter and current text content
-            (princ (strcat "\n[" (itoa (1+ idx)) "/"
-                           (itoa total) "]  Text: \""
-                           textval "\""))
+            (princ (strcat "\n[" (itoa (1+ idx)) "/" (itoa total)
+                           "]  Text: \"" textval "\""))
 
-            ;; getkword presents R/K; nil is returned on ESC
             (initget "Replace Keep")
-            (setq choice
-              (getkword
-                "\n  Action [Replace/Keep] or ESC to cancel: "))
+            (setq choice (getkword "\n  [Replace/Keep] or ESC to cancel: "))
 
             (cond
 
-              ;; ----------- Replace --------------------------
+              ;; ── Replace ───────────────────────────────────────────────
               ((= choice "Replace")
-               (setq newtext (fr:strreplaceall
-                               searchstr replstr textval))
-               (fr:settext   ent newtext)
-               (fr:setcolor  ent (nth idx colors)) ; restore color
+               (setq newtext (fr:strreplaceall searchstr replstr textval))
+               (fr:settext ent newtext)
+               ;; Expand MTEXT box so the longer replacement doesn't wrap
+               (if (= (cdr (assoc 0 (entget ent))) "MTEXT")
+                 (fr:fixmtextwidth ent)
+               )
+               (fr:dehighlight ent)
                (setq idx (1+ idx))
               )
 
-              ;; ----------- Keep -----------------------------
+              ;; ── Keep ──────────────────────────────────────────────────
               ((= choice "Keep")
-               (fr:setcolor ent (nth idx colors))  ; restore color
+               (fr:dehighlight ent)
                (setq idx (1+ idx))
               )
 
-              ;; ----------- ESC / nil ------------------------
+              ;; ── ESC / nil ─────────────────────────────────────────────
+              ;; Replacements already committed stay committed.
               (T
-               ;; Restore highlights for this and all remaining
-               (fr:restorecolors match-list colors idx)
-               (princ "\nCancelled. All remaining highlights restored.")
+               (fr:dehighlightfrom match-list idx)
+               (princ "\nCancelled. Replacements made so far are saved.")
                (setq done T)
               )
-            ) ; end cond
-          ) ; end while
+
+            ) ; cond
+          ) ; while
 
           (if (not done)
             (princ "\nFind & Replace complete.")
           )
-        ) ; end progn (matches found)
-      ) ; end if total = 0
-    ) ; end progn (main body)
-  ) ; end if searchstr empty
+
+        ) ; progn — matches found
+      ) ; if total = 0
+
+    ) ; progn — main body
+
+    ;; Empty search string
+    (princ "\nNo search string entered.")
+
+  ) ; if not empty
 
   (princ)   ; suppress the nil echo at the Command prompt
 )
