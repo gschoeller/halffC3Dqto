@@ -1,5 +1,5 @@
 ;;; ============================================================
-;;; findreplace.lsp  (v2)
+;;; findreplace.lsp  (v2.1)
 ;;; AutoCAD / Civil3D — Find & Replace across drawing text entities
 ;;;
 ;;; Supported entity types
@@ -134,18 +134,25 @@
   ;; Widen the MTEXT box to the content's natural (un-wrapped) width.
   ;; Steps:
   ;;   1. Temporarily set DXF 41 (box width) to 0 — no constraint
-  ;;   2. Measure the actual rendered width via vla-getboundingbox
-  ;;   3. Lock that natural width back into DXF 41
+  ;;   2. Force AutoCAD to re-flow the text layout via vla-regen
+  ;;      (entupd alone queues the update but the geometry cache used by
+  ;;      vla-getboundingbox is not refreshed until the regen runs)
+  ;;   3. Measure the actual rendered width via vla-getboundingbox
+  ;;   4. Lock that natural width back into DXF 41
   ;; This eliminates soft wrap caused by the replacement being longer
   ;; than the original.  Hard \P paragraph breaks are unaffected.
+  ;; Returns T so the caller knows a regen was performed and can
+  ;; re-apply selection highlights that regen clears.
   (setq dxf     (entget ent)
         widpair (assoc 41 dxf)
         curw    (if widpair (cdr widpair) 0.0))
   (if (> curw 0.0)
     (progn
-      ;; Release width constraint
+      ;; Release width constraint and force a re-layout
       (entmod (subst (cons 41 0.0) widpair dxf))
       (entupd ent)
+      ;; acActiveViewport = 1; regen flushes the deferred layout cache
+      (vla-regen (vla-get-activedocument (vlax-get-acad-object)) 1)
       (setq obj (vlax-ename->vla-object ent))
       (if (not (vl-catch-all-error-p
                   (vl-catch-all-apply 'vla-getboundingbox
@@ -167,6 +174,7 @@
           (entupd ent)
         )
       )
+      T   ; signal to caller: regen was performed, highlights were cleared
     )
   )
 )
@@ -206,7 +214,7 @@
 ;;; ════════════════════════════════════════════════════════════
 
 (defun c:FINDREPLACE
-       (/ searchstr replstr ss slen idx ent
+       (/ searchstr replstr ss slen idx ent etype j
           match-list total choice textval newtext done)
 
   (vl-load-com)
@@ -273,6 +281,7 @@
           (while (and (< idx total) (not done))
 
             (setq ent     (nth idx match-list)
+                  etype   (cdr (assoc 0 (entget ent)))
                   textval (fr:gettext ent))
 
             ;; Zoom in; re-apply glow in case the screen refresh cleared it
@@ -282,35 +291,51 @@
             (princ (strcat "\n[" (itoa (1+ idx)) "/" (itoa total)
                            "]  Text: \"" textval "\""))
 
+            ;; initget with no bit-1 flag allows a null (Enter) response.
+            ;; getkword is wrapped in vl-catch-all-apply so that ESC —
+            ;; which raises a cancellation error — can be caught cleanly
+            ;; and distinguished from a plain Enter (which returns nil).
             (initget "Replace Keep")
-            (setq choice (getkword "\n  [Replace/Keep] or ESC to cancel: "))
+            (setq choice
+              (vl-catch-all-apply 'getkword
+                (list "\n  [R]eplace / [K]eep / Enter=Replace / ESC to cancel: ")))
 
             (cond
 
-              ;; ── Replace ───────────────────────────────────────────────
-              ((= choice "Replace")
+              ;; ── ESC — caught error ────────────────────────────────────
+              ;; Replacements already committed stay committed.
+              ((vl-catch-all-error-p choice)
+               (fr:dehighlightfrom match-list idx)
+               (princ "\nCancelled. Replacements made so far are saved.")
+               (setq done T)
+              )
+
+              ;; ── Replace — Enter (nil) or "R" keyword ─────────────────
+              ((or (null choice) (= choice "Replace"))
                (setq newtext (fr:strreplaceall searchstr replstr textval))
                (fr:settext ent newtext)
-               ;; Expand MTEXT box so the longer replacement doesn't wrap
-               (if (= (cdr (assoc 0 (entget ent))) "MTEXT")
-                 (fr:fixmtextwidth ent)
+               ;; Expand MTEXT box so the longer replacement doesn't wrap.
+               ;; fr:fixmtextwidth calls vla-regen, which clears all
+               ;; selection glows; re-apply to the remaining entities.
+               (if (= etype "MTEXT")
+                 (if (fr:fixmtextwidth ent)
+                   (progn
+                     (setq j (1+ idx))
+                     (while (< j total)
+                       (fr:highlight (nth j match-list))
+                       (setq j (1+ j))
+                     )
+                   )
+                 )
                )
                (fr:dehighlight ent)
                (setq idx (1+ idx))
               )
 
-              ;; ── Keep ──────────────────────────────────────────────────
+              ;; ── Keep — "K" keyword ────────────────────────────────────
               ((= choice "Keep")
                (fr:dehighlight ent)
                (setq idx (1+ idx))
-              )
-
-              ;; ── ESC / nil ─────────────────────────────────────────────
-              ;; Replacements already committed stay committed.
-              (T
-               (fr:dehighlightfrom match-list idx)
-               (princ "\nCancelled. Replacements made so far are saved.")
-               (setq done T)
               )
 
             ) ; cond
