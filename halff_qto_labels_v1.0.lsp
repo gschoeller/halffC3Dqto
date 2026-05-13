@@ -112,7 +112,8 @@
      (if (> x 0.0) (fix (+ x 0.999999)) 0.0))
     ((= *HALFF_ROUND_MODE* "NEAREST")
      (if (> x 0.0) (fix (+ x 0.5)) 0.0))
-    (T (fix (+ x 0.5)))))
+    (T (fix (+ x 0.5))))
+    )
 
 ;; ===========================================
 ;; CSV FUNCTIONS
@@ -126,7 +127,8 @@
 (defun halff:csv-line (vals / out)
   (setq out "")
   (foreach v vals
-    (setq out (strcat out (if (= out "") "" ",") (halff:csv-escape (halff:safe-str v)))))
+    (setq out (strcat out (if (= out "") "" ",") (halff:csv-escape (halff:safe-str v))))
+    )
   out)
 
 (defun halff:csv-write-lines (path lines / f)
@@ -173,7 +175,8 @@
     (progn
       (setq ua (/ (- (* (- dx cx) (- ay cy)) (* (- dy cy) (- ax cx))) den))
       (setq ub (/ (- (* (- bx ax) (- ay cy)) (* (- by ay) (- ax cx))) den))
-      (and (<= 0.0 ua) (<= ua 1.0) (<= 0.0 ub) (<= ub 1.0)))))
+      (and (<= 0.0 ua) (<= ua 1.0) (<= 0.0 ub) (<= ub 1.0))))
+      )
 
 (defun halff:seg-intersect-pt (a b c d / ax ay bx by cx cy dx dy den ua)
   (setq ax (car a) ay (cadr a))
@@ -270,9 +273,12 @@
      (setq a1 (vla-get-StartAngle vlaObj))
      (setq a2 (vla-get-EndAngle vlaObj))
      (setq am (/ (+ a1 a2) 2.0))
-     (setq p1 (list (+ (car cen) (* r (cos a1))) (+ (cadr cen) (* r (sin a1)))))
-     (setq p2 (list (+ (car cen) (* r (cos am))) (+ (cadr cen) (* r (sin am)))))
-     (setq p3 (list (+ (car cen) (* r (cos a2))) (+ (cadr cen) (* r (sin a2)))))
+     (setq p1 (list (+ (car cen) (* r (cos a1))) (+ (cadr cen) (* r (sin a1))))
+     )
+     (setq p2 (list (+ (car cen) (* r (cos am))) (+ (cadr cen) (* r (sin am))))
+     )
+     (setq p3 (list (+ (car cen) (* r (cos a2))) (+ (cadr cen) (* r (sin a2))))
+     )
      (list p1 p2 p3))
 
     ((= oname "ACDBHATCH")
@@ -374,7 +380,8 @@
           (foreach p entPts
             (if (halff:pt-in-poly p vpPoly)
               (progn (setq anyIn T) (setq countIn (1+ countIn)))
-              (progn (setq anyOut T) (setq countOut (1+ countOut)))))
+              (progn (setq anyOut T) (setq countOut (1+ countOut))))
+              )
           (if (and anyIn anyOut)
             (progn
               (setq pctIn (/ (* countIn 100.0) totalPts))
@@ -384,7 +391,8 @@
                 (if (>= totalPts 2)
                   (halff:entity-crosses-poly? entPts vpPoly)
                   nil)))
-            nil)))))
+            nil))))
+            ))
 
 (defun halff:pt-to-seg-dist (pt p1 p2 / px py x1 y1 x2 y2 dx dy dsq param cx cy)
   (setq px (car pt) py (cadr pt))
@@ -400,7 +408,8 @@
       (if (> param 1.0) (setq param 1.0))
       (setq cx (+ x1 (* param dx)))
       (setq cy (+ y1 (* param dy)))
-      (distance pt (list cx cy)))))
+      (distance pt (list cx cy))))
+      )
 
 ;; ===========================================
 ;; VIEWPORT FUNCTIONS
@@ -412,7 +421,8 @@
 (defun halff:str->pt (s / p)
   (setq p (vl-string-search "," s))
   (list (atof (substr s 1 p))
-        (atof (substr s (+ p 2)))))
+        (atof (substr s (+ p 2))))
+        )
 
 (defun halff:get-lwpoly-pts (vlaObj / coords pts i n out)
   (setq coords (halff:variant->list (vla-get-Coordinates vlaObj)))
@@ -439,7 +449,8 @@
     (if (and (/= yi yj)
              (<= (min yi yj) y)
              (<  y (max yi yj))
-             (<  x (+ xi (* (/ (- y yi) (- yj yi)) (- xj xi)))))
+             (<  x (+ xi (* (/ (- y yi) (- yj yi)) (- xj xi))))
+             )
       (setq inside (not inside)))
     (setq j i)
     (setq i (1+ i)))
@@ -451,7 +462,8 @@
     (setq nm (car vp) pts (cdr vp))
     (setq xs (mapcar 'car pts) ys (mapcar 'cadr pts))
     (setq bb (list (apply 'min xs) (apply 'min ys) (apply 'max xs) (apply 'max ys)))
-    (setq out (append out (list (list nm pts bb)))))
+    (setq out (append out (list (list nm pts bb))))
+    )
   out)
 
 (defun halff:vla-bbox (e / o mn mx a b res)
@@ -461,7 +473,8 @@
       (vla-getboundingbox o 'mn 'mx)
       (setq a (halff:variant->list mn))
       (setq b (halff:variant->list mx))
-      (list (car a) (cadr a) (car b) (cadr b)))))
+      (list (car a) (cadr a) (car b) (cadr b))))
+      )
   (if (vl-catch-all-error-p res) nil res))
 
 (defun halff:bbox-overlap (b1 b2)
@@ -482,7 +495,8 @@
       (vla-getboundingbox vlaObj 'mn 'mx)
       (setq mnList (halff:variant->list mn))
       (setq mxList (halff:variant->list mx))
-      (list (car mnList) (cadr mnList) (car mxList) (cadr mxList)))))
+      (list (car mnList) (cadr mnList) (car mxList) (cadr mxList))))
+      )
   (if (vl-catch-all-error-p res)
     nil
     (progn
@@ -493,7 +507,8 @@
           (setq cx (/ (+ (nth 0 ebb) (nth 2 ebb)) 2.0))
           (setq cy (/ (+ (nth 1 ebb) (nth 3 ebb)) 2.0))
           (setq center (list cx cy))
-          (halff:pt-in-poly center pts))))))
+          (halff:pt-in-poly center pts))))
+          ))
 
 ;; ===========================================
 ;; GEOMETRY FUNCTIONS
@@ -505,7 +520,8 @@
       (setq o (vlax-ename->vla-object e))
       (if (= (vla-get-ObjectName o) "AcDbCircle")
         (* 2.0 pi (vla-get-Radius o))
-        (vlax-curve-getDistAtParam e (vlax-curve-getEndParam e))))))
+        (vlax-curve-getDistAtParam e (vlax-curve-getEndParam e))))
+        ))
   (if (vl-catch-all-error-p res) 0.0 res))
 
 (defun halff:area (e / o res)
@@ -551,7 +567,8 @@
 (defun halff:apply-mult (q m / mm)
   (setq m (halff:trim m))
   (if (= m "") q
-    (progn (setq mm (atof m)) (if (= mm 0.0) q (* q mm)))))
+    (progn (setq mm (atof m)) (if (= mm 0.0) q (* q mm))))
+    )
 
 ;; ===========================================
 ;; TEXT CONTENT SEARCH HELPERS
@@ -569,7 +586,8 @@
   ;; Searches the raw string including any embedded MTEXT formatting codes.
   ;; In practice, user-entered label phrases appear verbatim in the raw
   ;; DXF text string even when surrounded by format-code braces.
-  (not (null (vl-string-search (strcase needle) (strcase haystack)))))
+  (not (null (vl-string-search (strcase needle) (strcase haystack))))
+  )
 
 (defun halff:text-obj-types (objStr / types out u searchAll)
   ;; Map the OBJECT column value to a list of uppercase VLA ObjectName
@@ -594,7 +612,8 @@
           (T
            ;; Unrecognised (e.g. "Alignment Station Offset Label") →
            ;; search every entity in the file for text content.
-           (setq searchAll T))))))
+           (setq searchAll T))))
+           ))
   (if searchAll nil (reverse out)))
 
 ;; ===========================================
@@ -643,7 +662,8 @@
   (setq pat (if (= etype "HATCH") (strcase (cdr (assoc 2 ed))) ""))
   (and
     (or (= (halff:trim ltype) "") (= lt (strcase (halff:trim ltype))))
-    (or (= (halff:trim hatchpat) "") (and (= etype "HATCH") (= pat (strcase (halff:trim hatchpat)))))))
+    (or (= (halff:trim hatchpat) "") (and (= etype "HATCH") (= pat (strcase (halff:trim hatchpat))))
+    )))
 
 ;; ===========================================
 ;; MEASUREMENT & QUANTIFICATION
@@ -657,7 +677,8 @@
           ((= mode "COUNT") 1.0)
           ((member mode '("LENGTH_FT" "LENGTH_YD")) (halff:convert (halff:length e) mode fs))
           ((member mode '("AREA_FT2" "AREA_YD2")) (halff:convert (halff:area e) mode fs))
-          (T 0.0)))))
+          (T 0.0))))
+          )
   (if (vl-catch-all-error-p one) 0.0
     (if (and *HALFF_ROUND_EACH* (not (= mode "COUNT"))) (halff:round0 one) one)))
 
@@ -672,7 +693,8 @@
                          (mapcar '(lambda (vp) (strcat "," vp)) (cdr vpnames))))
                      "N/A")
                    vpnames)
-                 reason)))))
+                 reason))))
+                 )
 
 (defun halff:sum-per-vps (ss mode fs ltype hatchpat vps payitem filepath / i e meas out outside hit j vpname)
   (setq out (halff:zeros (length vps)))
@@ -700,7 +722,8 @@
               (progn
                 (setq outside (+ outside meas))
                 (halff:log-failure payitem filepath (cdr (assoc 8 (entget e)))
-                                  (cdr (assoc 0 (entget e))) "OUTSIDE" "Entity outside all viewports")))))
+                                  (cdr (assoc 0 (entget e))) "OUTSIDE" "Entity outside all viewports"))))
+                                  ))
       (halff:log-failure payitem filepath (cdr (assoc 8 (entget e)))
                         (cdr (assoc 0 (entget e))) "N/A" "Failed filter (linetype or pattern)"))
     (setq i (1+ i)))
@@ -725,7 +748,8 @@
 (defun halff:xl-close (xl wb)
   (if wb (vl-catch-all-apply 'vlax-invoke-method (list wb 'Close 0)))
   (if xl (progn (vl-catch-all-apply 'vlax-invoke-method (list xl 'Quit))
-                (vl-catch-all-apply 'vlax-release-object (list xl)))))
+                (vl-catch-all-apply 'vlax-release-object (list xl))))
+                )
 
 (defun halff:ws-active (wb)
   (vlax-get-property wb 'ActiveSheet))
@@ -760,7 +784,8 @@
   (setq maxc (halff:used-cols ws))
   (setq hdr '() i 1)
   (while (<= i maxc)
-    (setq hdr (append hdr (list (halff:upper (halff:get-row-string ws 1 i)))))
+    (setq hdr (append hdr (list (halff:upper (halff:get-row-string ws 1 i))))
+    )
     (setq i (1+ i)))
   hdr)
 
@@ -810,7 +835,8 @@
   (list "ObjectDBX.AxDbDocument"
         (strcat "ObjectDBX.AxDbDocument." (itoa maj))
         (strcat "ObjectDBX.AxDbDocument." (itoa (1- maj)))
-        (strcat "ObjectDBX.AxDbDocument." (itoa (+ maj 1)))))
+        (strcat "ObjectDBX.AxDbDocument." (itoa (+ maj 1))))
+        )
 
 (defun halff:dbx-create (/ acad pid obj err err2)
   (setq acad (vlax-get-acad-object))
@@ -824,7 +850,8 @@
           (progn
             (setq err2 (vl-catch-all-apply 'vla-getInterfaceObject (list acad pid)))
             (if (not (vl-catch-all-error-p err2))
-              (setq obj err2)))))))
+              (setq obj err2))))
+              )))
   obj)
 
 ;; ===========================================
@@ -859,7 +886,8 @@
             (setq vstr "")
             (foreach p pts
               (setq vstr (strcat vstr (if (= vstr "") "" ";") (halff:pt->str p))))
-            (setq out (append out (list (strcat name ",\"" vstr "\""))))) 
+            (setq out (append out (list (strcat name ",\"" vstr "\""))))
+            )
           (halff:csv-write-lines path out)
           (prompt (strcat "\nSaved " (itoa (length *HALFF_VP_DEFS*)) " VP defs: " path)))
         (prompt "\nCancelled."))))
@@ -884,7 +912,8 @@
             (setq name (car parts))
             (setq vstr (cadr parts))
             (if (and vstr (> (strlen vstr) 0))
-              (setq vstr (substr vstr 1 (1- (strlen vstr)))))
+              (setq vstr (substr vstr 1 (1- (strlen vstr))))
+              )
             (setq pts '())
             (foreach tok (halff:split vstr ";")
               (setq pts (cons (halff:str->pt tok) pts)))
@@ -893,7 +922,8 @@
           (close f)
           (setq *HALFF_VP_DEFS* (reverse *HALFF_VP_DEFS*))
           (halff:set-vp-path path)
-          (prompt (strcat "\nLoaded " (itoa (length *HALFF_VP_DEFS*)) " VP defs from: " path))))))
+          (prompt (strcat "\nLoaded " (itoa (length *HALFF_VP_DEFS*)) " VP defs from: " path))))
+          ))
   (princ))
 
 (defun c:QVPSET (/ cur p)
@@ -919,7 +949,8 @@
   (if isCurrentDwg
     (progn
       (princ "\n    Processing CURRENT drawing")
-      (setq ms (vla-get-ModelSpace (vla-get-ActiveDocument (vlax-get-acad-object)))))
+      (setq ms (vla-get-ModelSpace (vla-get-ActiveDocument (vlax-get-acad-object))))
+      )
     (progn
       (setq dbx (halff:dbx-create))
       (if (not dbx)
@@ -936,9 +967,11 @@
               (halff:log-failure payitem dwgPath layer objstr "N/A"
                                 (strcat "Cannot open file: " (vl-catch-all-error-message openRes)))
               (vl-catch-all-apply 'vlax-release-object (list dbx))
-              (list 0.0 (halff:zeros (length vps)))))
+              (list 0.0 (halff:zeros (length vps))))
+              )
           (if (not (vl-catch-all-error-p openRes))
-            (setq ms (vla-get-ModelSpace dbx)))))))
+            (setq ms (vla-get-ModelSpace dbx))))
+            )))
   (if (not ms)
     (list 0.0 (halff:zeros (length vps)))
     (progn
@@ -960,10 +993,12 @@
                      (= (strcase (vla-get-Linetype ent)) (strcase (halff:trim ltype))))
                  (or (= (halff:trim hatchpat) "")
                      (/= dxfName "HATCH")
-                     (= (strcase (vla-get-PatternName ent)) (strcase (halff:trim hatchpat)))))
+                     (= (strcase (vla-get-PatternName ent)) (strcase (halff:trim hatchpat))))
+                     )
           (progn
             (setq entList (cons ent entList))
-            (setq found (1+ found)))))
+            (setq found (1+ found))))
+            )
       (princ (strcat "\n      Found " (itoa found) " entities"))
       (if (> found 0)
         (progn
@@ -988,6 +1023,7 @@
                   ((member mode '("AREA_FT2" "AREA_YD2"))
                    (halff:convert (vla-get-Area ent) mode fs))
                   (T 0.0))))
+                  )
             (if (vl-catch-all-error-p qty)
               (progn
                 (setq qty 0.0)
@@ -1013,7 +1049,8 @@
                   (if (halff:vla-ent-in-vp ent (nth i vps))
                     (progn
                       (if (= firstHitIdx -1) (setq firstHitIdx i))
-                      (setq vpNamesIn (append vpNamesIn (list (car (nth i vps)))))
+                      (setq vpNamesIn (append vpNamesIn (list (car (nth i vps))))
+                      )
                       (setq hit T)
                       (setq hitCount (1+ hitCount))))
                   (setq i (1+ i)))
@@ -1021,10 +1058,12 @@
                 (while (< i (length vps))
                   (if (= objType "ACDBHATCH")
                     (if (halff:vla-ent-crosses-vp? ent (cadr (nth i vps)))
-                      (setq vpNamesCrossing (append vpNamesCrossing (list (car (nth i vps))))))
+                      (setq vpNamesCrossing (append vpNamesCrossing (list (car (nth i vps))))
+                      ))
                     (if (and (/= i firstHitIdx) entPts (>= (length entPts) 2))
                       (if (halff:genuine-crossing? entPts (cadr (nth i vps)))
-                        (setq vpNamesCrossing (append vpNamesCrossing (list (car (nth i vps))))))))
+                        (setq vpNamesCrossing (append vpNamesCrossing (list (car (nth i vps))))
+                        ))))
                   (setq i (1+ i)))
                 (if (> (length vpNamesCrossing) 0)
                   (progn
@@ -1054,7 +1093,8 @@
                      (halff:vla-name->dxf (vla-get-ObjectName ent))
                      "OUTSIDE" "Entity outside all viewports")))
                 (if (and isCurrentDwg isFail)
-                  (halff:remember-fail-entity ent)))))
+                  (halff:remember-fail-entity ent))))
+                  )
           (princ (strcat "\n      Total=" (rtos totalQty 2 4)))
           (if (and (not isCurrentDwg) dbx) (vl-catch-all-apply 'vlax-release-object (list dbx)))
           (list (halff:apply-mult totalQty mult)
@@ -1063,7 +1103,8 @@
           (princ "\n      No entities found")
           (halff:log-failure payitem dwgPath layer objstr "N/A" "No entities match filters")
           (if (and (not isCurrentDwg) dbx) (vl-catch-all-apply 'vlax-release-object (list dbx)))
-          (list 0.0 (halff:zeros (length vps)))))))
+          (list 0.0 (halff:zeros (length vps))))
+          ))))
 
 ;; ===========================================
 ;; TEXT CONTENT COUNT - PROCESS ONE DWG FILE
@@ -1083,7 +1124,8 @@
     (progn
       (princ "\n    Processing CURRENT drawing (text-count mode)")
       (setq ms (vla-get-ModelSpace
-                 (vla-get-ActiveDocument (vlax-get-acad-object)))))
+                 (vla-get-ActiveDocument (vlax-get-acad-object))))
+                 )
     (progn
       (setq dbx (halff:dbx-create))
       (if (not dbx)
@@ -1102,7 +1144,8 @@
                                          (vl-catch-all-error-message openRes)))
               (vl-catch-all-apply 'vlax-release-object (list dbx))
               (setq ms nil))
-            (setq ms (vla-get-ModelSpace dbx)))))))
+            (setq ms (vla-get-ModelSpace dbx))))
+            )))
 
   (if (not ms)
     (list 0.0 (halff:zeros (length vps)))
@@ -1161,7 +1204,9 @@
                     (setq en (vl-catch-all-apply
                                'vlax-vla-object->ename (list obj)))
                     (if (not (vl-catch-all-error-p en))
-                      (halff:remember-entity payitem obj)))))))))
+                      (halff:remember-entity payitem obj))))
+                      ))))
+                      )
 
       (princ (strcat "\n      Matched " (itoa found)
                      " text entities containing \""
@@ -1275,7 +1320,8 @@
                                          "UNIT" "QTY_MODEL"))
                       (foreach vp *HALFF_VP_DEFS*
                         (setq outrow (append outrow
-                                             (list (strcat "QTY_" (car vp))))))
+                                             (list (strcat "QTY_" (car vp))))
+                                             ))
                       (write-line (halff:csv-line outrow) f)
                       (princ "\n[QRUN] Processing rows...")
                       (setq r 2)
@@ -1336,7 +1382,8 @@
                                 (halff:log-failure pay filepath layer obj
                                                    "N/A" "File not found")
                                 (setq result
-                                  (list 0.0 (halff:zeros (length vps)))))
+                                  (list 0.0 (halff:zeros (length vps))))
+                                  )
                               ;; --- Route to correct processor --------
                               (if (/= textcontent "")
                                 ;; Text-count mode: search text by content
@@ -1354,7 +1401,8 @@
                               (list pay desc unit (rtos totalQty 2 4)))
                             (foreach vpq vpVals
                               (setq outrow
-                                (append outrow (list (rtos vpq 2 4)))))
+                                (append outrow (list (rtos vpq 2 4))))
+                                )
                             (write-line (halff:csv-line outrow) f)))
                         (setq r (1+ r)))
 
@@ -1371,14 +1419,17 @@
                           (close f)
                           (princ (strcat "\n[QRUN] OK Failure log: " outfail))
                           (princ (strcat "\n[QRUN] OK Total failures: "
-                                         (itoa (length *HALFF_FAILURE_LOG*))))))
+                                         (itoa (length *HALFF_FAILURE_LOG*))))
+                                         ))
                       (princ "\n+===============================================================+")
                       (princ "\n|                   QTO COMPLETE!                               |")
                       (princ "\n+===============================================================+")
                       (princ (strcat "\n[QRUN] OK CSV written: " outcsv))
                       (princ (strcat "\n[QRUN] OK Rows processed: "
                                      (itoa (- lastRow 1))))
-                      T))))))))))
+                      T))))
+                      ))))
+                      )))
 
 ;; ===========================================
 ;; USER COMMANDS
@@ -1460,7 +1511,8 @@
     (progn
       (setq payitem (vl-string-trim " " payitem))
       (if (wcmatch payitem "*#*")
-        (setq payitem (rtos (atof payitem) 2 1)))))
+        (setq payitem (rtos (atof payitem) 2 1))))
+        )
   (if (and *HALFF_HIGHLIGHT_ENABLE* payitem (/= payitem ""))
     (progn
       (setq en (vl-catch-all-apply 'vlax-vla-object->ename (list vlaObj)))
@@ -1478,14 +1530,17 @@
                                  rec
                                  *HALFF_PAYITEM_ENTS*))))
                 (setq *HALFF_PAYITEM_ENTS*
-                      (cons (cons payitem (list en)) *HALFF_PAYITEM_ENTS*))))))))
+                      (cons (cons payitem (list en)) *HALFF_PAYITEM_ENTS*))))
+                      ))))
+                      )
   nil)
 
 (defun halff:remember-fail-entity (vlaObj / en)
   (setq en (vl-catch-all-apply 'vlax-vla-object->ename (list vlaObj)))
   (if (not (vl-catch-all-error-p en))
     (if (and en (entget en) (not (member en *HALFF_FAIL_ENTS*)))
-      (setq *HALFF_FAIL_ENTS* (append *HALFF_FAIL_ENTS* (list en)))))
+      (setq *HALFF_FAIL_ENTS* (append *HALFF_FAIL_ENTS* (list en))))
+      )
   nil)
 
 (defun halff:payitem->ss (pay / rec ss en)
@@ -1514,7 +1569,8 @@
       (progn
         (setq num (atof s0))
         (setq fmt (rtos num 2 1))
-        (if (assoc fmt *HALFF_PAYITEM_ENTS*) fmt nil)))))
+        (if (assoc fmt *HALFF_PAYITEM_ENTS*) fmt nil))))
+        )
 
 (defun halff:any->str (x)
   (if x (if (= (type x) 'STR) x (vl-princ-to-string x)) ""))
@@ -1555,12 +1611,14 @@
               (rtos (car mnL) 2 prec) ","
               (rtos (cadr mnL) 2 prec) ","
               (rtos (car mxL) 2 prec) ","
-              (rtos (cadr mxL) 2 prec)))))
+              (rtos (cadr mxL) 2 prec))))
+              )
 
 (defun halff:vp-name-list (/ out rec)
   (setq out '())
   (foreach rec *HALFF_VP_DEFS*
-    (setq out (append out (list (car rec)))))
+    (setq out (append out (list (car rec))))
+    )
   out)
 
 (defun halff:get-vp-poly-by-name (vpName / rec)
@@ -1577,7 +1635,8 @@
           (progn
             (setq obj (vlax-ename->vla-object en))
             (if (halff:vla-in-poly obj vpPoly)
-              (ssadd en ss)))))
+              (ssadd en ss))))
+              )
       ss)
     nil))
 
@@ -1632,7 +1691,8 @@
                              " entities for PAY ITEM: "
                              (halff:any->str payKey))))
             (princ (strcat "\nX Pay item not found in this drawing: "
-                           (halff:any->str payKey)))))))
+                           (halff:any->str payKey))))
+                           ))))
   (princ))
 
 (defun c:QHILITEVP (/ vpName vpPoly payRaw payKey ss vpNames)
@@ -1673,8 +1733,10 @@
                                    (halff:any->str payKey)
                                    " in VP " vpName)))
                   (princ (strcat "\nX Pay item not found in viewport "
-                                 vpName ": " (halff:any->str payKey)))))
-              (princ "\nX No pay item entered."))))))
+                                 vpName ": " (halff:any->str payKey))))
+                                 )
+              (princ "\nX No pay item entered."))))
+              )))
   (princ))
 
 (defun c:QSEARCH (/ payRaw payKey rec ens idx n en obj prevObj ss cmd)
@@ -1737,8 +1799,11 @@
                                                    (list prevObj :vlax-false)))
                              (sssetfirst nil nil)
                              (setq ens nil))))
+                             )
                       (setq idx
-                        (if (< idx (1- n)) (1+ idx) 0))))))))))))
+                        (if (< idx (1- n)) (1+ idx) 0))))
+                        ))))
+                        ))))
   (princ))
 
 (defun c:QSEARCHVP (/ vpName vpPoly payRaw payKey rec ens idx n en obj prevObj ss cmd vpFilteredEnts)
@@ -1772,7 +1837,8 @@
                                  (halff:vla-in-poly
                                    (vlax-ename->vla-object en) vpPoly))
                           (setq vpFilteredEnts
-                            (append vpFilteredEnts (list en)))))
+                            (append vpFilteredEnts (list en))))
+                            )
                       (if (= (length vpFilteredEnts) 0)
                         (princ (strcat "\nNo entities found for " payRaw
                                        " in viewport " vpName))
@@ -1805,7 +1871,10 @@
                           (if prevObj
                             (vl-catch-all-apply 'vla-Highlight
                                                 (list prevObj :vlax-false)))
-                          (princ "\nSearch ended."))))))))))))))
+                          (princ "\nSearch ended."))))
+                          ))))
+                          ))))
+                          )
   (princ))
 
 (defun c:QDUPLICATES (/ tol prec s i e key seen pair dup cnt)
@@ -1838,8 +1907,8 @@
           (sssetfirst nil dup)
           (princ (strcat "\nOK Found " (itoa (sslength dup))
                          " duplicated objects. Selected duplicates.")))
-        (princ "\nOK No duplicates found."))))
-  (princ))
+        (princ "\nOK No duplicates found.")))
+  (princ)))
 
 ;; ===========================================
 ;; FAILURE HIGHLIGHT COMMANDS
@@ -1906,10 +1975,12 @@
                                            (list prevObj :vlax-false)))
                      (sssetfirst nil nil)
                      (setq idx -1))))
+                     )
               (setq idx (if (< idx (1- n)) (1+ idx) 0))))
           (if prevObj
             (vl-catch-all-apply 'vla-Highlight (list prevObj :vlax-false)))
-          (princ "\nQFAILSEARCH ended."))))
+          (princ "\nQFAILSEARCH ended.")))
+          )
   (princ))
 
 ;; ===========================================
