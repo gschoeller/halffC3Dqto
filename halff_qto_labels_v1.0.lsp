@@ -384,7 +384,7 @@
                 (if (>= totalPts 2)
                   (halff:entity-crosses-poly? entPts vpPoly)
                   nil)))
-            nil))))))
+            nil)))))
 
 (defun halff:pt-to-seg-dist (pt p1 p2 / px py x1 y1 x2 y2 dx dy dsq param cx cy)
   (setq px (car pt) py (cadr pt))
@@ -592,7 +592,7 @@
           ((member u '("MLEADER" "MULTILEADER"))
            (setq out (cons "ACDBMLEADER" out)))
           (T
-           ;; Unrecognised (e.g. "Alignment Station Offset Label") ->
+           ;; Unrecognised (e.g. "Alignment Station Offset Label") →
            ;; search every entity in the file for text content.
            (setq searchAll T))))))
   (if searchAll nil (reverse out)))
@@ -700,7 +700,7 @@
               (progn
                 (setq outside (+ outside meas))
                 (halff:log-failure payitem filepath (cdr (assoc 8 (entget e)))
-                                  (cdr (assoc 0 (entget e))) "OUTSIDE" "Entity outside all viewports"))))))
+                                  (cdr (assoc 0 (entget e))) "OUTSIDE" "Entity outside all viewports")))))
       (halff:log-failure payitem filepath (cdr (assoc 8 (entget e)))
                         (cdr (assoc 0 (entget e))) "N/A" "Failed filter (linetype or pattern)"))
     (setq i (1+ i)))
@@ -910,7 +910,7 @@
 
 ;; ===========================================
 ;; MAIN QTO FUNCTION - PROCESS ONE DWG FILE
-;; (geometry / layer mode - unchanged from v1.22)
+;; (geometry / layer mode — unchanged from v1.22)
 ;; ===========================================
 
 (defun halff:process-dwg-file (dwgPath payitem unit layer objstr ltype hatchpat mult vps / dbx openRes ms mode fs types tstr found result vpVals dxfTypes ent dxfName entList totalQty vpQtys i qty j hit hitCount firstHitIdx crossesAny vpNamesIn vpNamesCrossing outside curPath isCurrentDwg entPts isFail objType)
@@ -987,7 +987,7 @@
                      mode fs))
                   ((member mode '("AREA_FT2" "AREA_YD2"))
                    (halff:convert (vla-get-Area ent) mode fs))
-                  (T 0.0)))))
+                  (T 0.0))))
             (if (vl-catch-all-error-p qty)
               (progn
                 (setq qty 0.0)
@@ -1063,7 +1063,7 @@
           (princ "\n      No entities found")
           (halff:log-failure payitem dwgPath layer objstr "N/A" "No entities match filters")
           (if (and (not isCurrentDwg) dbx) (vl-catch-all-apply 'vlax-release-object (list dbx)))
-          (list 0.0 (halff:zeros (length vps))))))))
+          (list 0.0 (halff:zeros (length vps)))))))
 
 ;; ===========================================
 ;; TEXT CONTENT COUNT - PROCESS ONE DWG FILE
@@ -1078,7 +1078,7 @@
   (setq curPath    (strcat (getvar "DWGPREFIX") (getvar "DWGNAME"))
         isCurrentDwg (= (strcase dwgPath) (strcase curPath)))
 
-  ;; Open the DWG - same DBX approach as halff:process-dwg-file
+  ;; Open the DWG — same DBX approach as halff:process-dwg-file
   (if isCurrentDwg
     (progn
       (princ "\n    Processing CURRENT drawing (text-count mode)")
@@ -1152,8 +1152,8 @@
                   (setq vpQtys
                     (halff:setnth vpQtys (1+ firstHitIdx)
                                   (+ (nth firstHitIdx vpQtys) 1.0))))
-                ;; hitCount 0  -> label outside all VPs; counted only in totalQty
-                ;; hitCount >1 -> ambiguous; counted only in totalQty
+                ;; hitCount 0  → label outside all VPs; counted only in totalQty
+                ;; hitCount >1 → ambiguous; counted only in totalQty
 
                 ;; Cache entity name for QHILITE / QSEARCH (current dwg only)
                 (if isCurrentDwg
@@ -1378,7 +1378,7 @@
                       (princ (strcat "\n[QRUN] OK CSV written: " outcsv))
                       (princ (strcat "\n[QRUN] OK Rows processed: "
                                      (itoa (- lastRow 1))))
-                      T)))))))))))
+                      T))))))))))
 
 ;; ===========================================
 ;; USER COMMANDS
@@ -1632,7 +1632,7 @@
                              " entities for PAY ITEM: "
                              (halff:any->str payKey))))
             (princ (strcat "\nX Pay item not found in this drawing: "
-                           (halff:any->str payKey))))))))
+                           (halff:any->str payKey)))))))
   (princ))
 
 (defun c:QHILITEVP (/ vpName vpPoly payRaw payKey ss vpNames)
@@ -1674,7 +1674,7 @@
                                    " in VP " vpName)))
                   (princ (strcat "\nX Pay item not found in viewport "
                                  vpName ": " (halff:any->str payKey)))))
-              (princ "\nX No pay item entered.")))))))
+              (princ "\nX No pay item entered."))))))
   (princ))
 
 (defun c:QSEARCH (/ payRaw payKey rec ens idx n en obj prevObj ss cmd)
@@ -1736,9 +1736,9 @@
                                (vl-catch-all-apply 'vla-Highlight
                                                    (list prevObj :vlax-false)))
                              (sssetfirst nil nil)
-                             (setq ens nil)))))
+                             (setq ens nil))))
                       (setq idx
-                        (if (< idx (1- n)) (1+ idx) 0))))))))))
+                        (if (< idx (1- n)) (1+ idx) 0))))))))))))
   (princ))
 
 (defun c:QSEARCHVP (/ vpName vpPoly payRaw payKey rec ens idx n en obj prevObj ss cmd vpFilteredEnts)
@@ -1805,7 +1805,7 @@
                           (if prevObj
                             (vl-catch-all-apply 'vla-Highlight
                                                 (list prevObj :vlax-false)))
-                          (princ "\nSearch ended.")))))))))))
+                          (princ "\nSearch ended."))))))))))))))
   (princ))
 
 (defun c:QDUPLICATES (/ tol prec s i e key seen pair dup cnt)
@@ -1905,7 +1905,7 @@
                        (vl-catch-all-apply 'vla-Highlight
                                            (list prevObj :vlax-false)))
                      (sssetfirst nil nil)
-                     (setq idx -1)))))
+                     (setq idx -1))))
               (setq idx (if (< idx (1- n)) (1+ idx) 0))))
           (if prevObj
             (vl-catch-all-apply 'vla-Highlight (list prevObj :vlax-false)))
@@ -1937,10 +1937,10 @@
 
 (princ "\n+===============================================================+")
 (princ "\n|  Halff QTO Labels v1.0                                        |")
-(princ "\n|  * All geometry / layer / VP features from QTO v1.22          |")
-(princ "\n|  * TEXT CONTENT column: count text entities by string match   |")
-(princ "\n|  * Supports TEXT, MTEXT, MLEADER, Civil 3D label objects      |")
-(princ "\n|  * Layer filter not required for text-count rows              |")
+(princ "\n|  • All geometry / layer / VP features from QTO v1.22          |")
+(princ "\n|  • TEXT CONTENT column: count text entities by string match   |")
+(princ "\n|  • Supports TEXT, MTEXT, MLEADER, Civil 3D label objects      |")
+(princ "\n|  • Layer filter not required for text-count rows              |")
 (princ "\n+===============================================================+")
 (princ "\n")
 (princ "\nViewport Commands:")
