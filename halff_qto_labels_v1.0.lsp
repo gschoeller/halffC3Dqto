@@ -574,20 +574,68 @@
 ;; TEXT CONTENT SEARCH HELPERS
 ;; ===========================================
 
-(defun halff:vla-get-text (obj / res)
-  ;; Extract text from any VLA entity object using vla-get-textstring.
-  ;; Works for TEXT, MTEXT, MULTILEADER, and Civil 3D proxy labels that
-  ;; expose a TextString property.  Returns nil on failure or empty string.
-  (setq res (vl-catch-all-apply 'vla-get-textstring (list obj)))
-  (if (or (vl-catch-all-error-p res) (null res) (= res "")) nil res))
+(defun halff:normalize-ws (s / i c code out last-sp)
+  (if (or (null s) (= s "")) ""
+    (progn
+      (setq out "" i 1 last-sp T)
+      (while (<= i (strlen s))
+        (setq c (substr s i 1)
+              code (ascii c))
+        (cond
+          ((and (= code 92)
+                (<= (1+ i) (strlen s))
+                (member (ascii (substr s (1+ i) 1)) '(80 112)))
+           (if (not last-sp)
+             (setq out (strcat out " ") last-sp T))
+           (setq i (1+ i)))
+          ((member code '(9 10 13 32))
+           (if (not last-sp)
+             (setq out (strcat out " ") last-sp T)))
+          (T (setq out (strcat out c) last-sp nil)))
+        (setq i (1+ i)))
+      (setq out (vl-string-trim " " out))
+      out)))
 
-(defun halff:text-contains? (needle haystack)
-  ;; T when NEEDLE appears anywhere in HAYSTACK (case-insensitive).
-  ;; Searches the raw string including any embedded MTEXT formatting codes.
-  ;; In practice, user-entered label phrases appear verbatim in the raw
-  ;; DXF text string even when surrounded by format-code braces.
-  (not (null (vl-string-search (strcase needle) (strcase haystack))))
-  )
+(defun halff:dxf-get-text (en / ed texts piece result)
+  (setq ed (entget en) texts '())
+  (foreach pair ed
+    (if (member (car pair) '(1 3))
+      (setq texts (cons (cdr pair) texts))))
+  (if texts
+    (progn
+      (setq result "")
+      (foreach piece (reverse texts)
+        (setq result (strcat result piece)))
+      (if (= result "") nil result))
+    nil))
+
+(defun halff:vla-get-text (obj / res en props txt)
+  (setq res (vl-catch-all-apply 'vla-get-textstring (list obj)))
+  (if (and (not (vl-catch-all-error-p res)) res (not (= res "")))
+    res
+    (progn
+      (setq props '("TextString" "Text" "Contents" "LabelText")
+            txt   nil)
+      (while (and props (not txt))
+        (setq res (vl-catch-all-apply
+                    'vlax-get-property (list obj (car props))))
+        (if (and (not (vl-catch-all-error-p res))
+                 res (= (type res) 'STR) (not (= res "")))
+          (setq txt res))
+        (setq props (cdr props)))
+      (if (not txt)
+        (progn
+          (setq en (vl-catch-all-apply
+                     'vlax-vla-object->ename (list obj)))
+          (if (not (vl-catch-all-error-p en))
+            (setq txt (halff:dxf-get-text en)))
+          ))
+      txt)))
+
+(defun halff:text-contains? (needle haystack / n h)
+  (setq n (strcase (halff:normalize-ws needle))
+        h (strcase (halff:normalize-ws haystack)))
+  (not (null (vl-string-search n h))))
 
 (defun halff:text-obj-types (objStr / types out u searchAll)
   ;; Map the OBJECT column value to a list of uppercase VLA ObjectName
