@@ -1,13 +1,8 @@
 ;; halff_qto_labels_v1.0_patch.lsp
-;; v1.1 fixes:
-;;   1. Whitespace-normalized text match (multi-line MLEADER/MTEXT)
-;;   2. DXF group-code 1/3 fallback for Civil 3D label text extraction
-;;   3. Correct parenthesis in c:QDUPLICATES and c:QFAILSEARCH
+;; v1.2: add QDUMPLABEL diagnostic + v1.1 fixes
 ;; Load AFTER halff_qto_labels_v1.0.lsp
 
 ;; -----------------------------------------------------------------------
-;; Normalize whitespace: collapses space/tab/LF/CR and MTEXT \P paragraph
-;; breaks (backslash=92 + P=80 or p=112) into a single space.
 (defun halff:normalize-ws (s / i c code out last-sp)
   (if (or (null s) (= s "")) ""
     (progn
@@ -31,7 +26,6 @@
       out)))
 
 ;; -----------------------------------------------------------------------
-;; Extract text via DXF group codes 1 and 3 (fallback for Civil 3D labels).
 (defun halff:dxf-get-text (en / ed texts piece result)
   (setq ed (entget en) texts '())
   (foreach pair ed
@@ -46,8 +40,6 @@
     nil))
 
 ;; -----------------------------------------------------------------------
-;; Extract display text from any entity.
-;; Tries vla-get-textstring, then alternate VLA properties, then DXF codes.
 (defun halff:vla-get-text (obj / res en props txt)
   (setq res (vl-catch-all-apply 'vla-get-textstring (list obj)))
   (if (and (not (vl-catch-all-error-p res)) res (not (= res "")))
@@ -72,14 +64,90 @@
       txt)))
 
 ;; -----------------------------------------------------------------------
-;; Case-insensitive substring match with whitespace normalization.
 (defun halff:text-contains? (needle haystack / n h)
   (setq n (strcase (halff:normalize-ws needle))
         h (strcase (halff:normalize-ws haystack)))
   (not (null (vl-string-search n h))))
 
 ;; -----------------------------------------------------------------------
-;; QDUPLICATES - correct parenthesis version
+;; Print one DXF/XDATA pair value to the command line.
+(defun halff:dump-pair (code val)
+  (princ (strcat "\n  [" (itoa code) "] "))
+  (if (= (type val) 'STR)
+    (princ val)
+    (princ (vl-princ-to-string val))))
+
+;; -----------------------------------------------------------------------
+;; QDUMPLABEL -- select any Civil 3D label, print all discoverable text:
+;;   entity type + handle, DXF string codes, XDATA (all apps), VLA string
+;;   properties, first child entity strings.
+;; Share the output so QRUN can be taught to read label text overrides.
+(defun c:QDUMPLABEL
+       (/ en ed pair obj pname res xd app sub-en sub-ed)
+  (vl-load-com)
+  (princ "\nQDUMPLABEL: select a Civil 3D label entity...")
+  (setq en (car (entsel "\nSelect label: ")))
+  (if (not en)
+    (princ "\nNo entity selected.")
+    (progn
+      (setq ed (entget en))
+      (princ (strcat "\n\n=== ENTITY: " (cdr (assoc 0 ed)) " ==="))
+      (if (assoc 5 ed)
+        (progn
+          (princ "\n    Handle: ")
+          (princ (cdr (assoc 5 ed)))
+          ))
+      ;; DXF string codes
+      (princ "\n\n--- DXF group codes (strings) ---")
+      (foreach pair ed
+        (if (= (type (cdr pair)) 'STR)
+          (halff:dump-pair (car pair) (cdr pair))))
+      ;; XDATA from all apps
+      (setq xd (entget en '("*")) app nil)
+      (foreach pair xd
+        (cond
+          ((= (car pair) -3)
+           (setq app T))
+          ((and app (= (car pair) 1001))
+           (princ (strcat "\n\n--- XDATA: " (cdr pair) " ---"))
+           (setq app (cdr pair)))
+          (app
+           (halff:dump-pair (car pair) (cdr pair)))
+          ))
+      ;; VLA string properties
+      (setq obj (vlax-ename->vla-object en))
+      (princ "\n\n--- VLA string properties ---")
+      (foreach pname '("TextString" "Text" "Contents" "LabelText"
+                       "OverrideText" "UserText" "TextOverride"
+                       "LabelTextOverride" "DisplayedText"
+                       "TextValue" "Name" "Description" "ObjectName")
+        (setq res (vl-catch-all-apply
+                    'vlax-get-property (list obj pname)))
+        (if (and (not (vl-catch-all-error-p res))
+                 res (= (type res) 'STR))
+          (progn
+            (princ (strcat "\n  " pname ": "))
+            (princ res))))
+      ;; First child entity strings
+      (setq sub-en (entnext en)
+            sub-ed nil)
+      (if sub-en
+        (setq sub-ed (entget sub-en)))
+      (if (and sub-en sub-ed
+               (assoc 330 sub-ed)
+               (equal (cdr (assoc 330 sub-ed))
+                      (cdr (assoc 5 ed))))
+        (progn
+          (princ "\n\n--- First child entity ---")
+          (princ (strcat "\n  Type: " (cdr (assoc 0 sub-ed))))
+          (foreach pair sub-ed
+            (if (= (type (cdr pair)) 'STR)
+              (halff:dump-pair (car pair) (cdr pair))))
+          ))
+      (princ "\n\n=== QDUMPLABEL done ===\n")))
+  (princ))
+
+;; -----------------------------------------------------------------------
 (defun c:QDUPLICATES (/ tol prec s i e key seen pair dup cnt)
   (vl-load-com)
   (initget 6)
@@ -115,7 +183,6 @@
   (princ))
 
 ;; -----------------------------------------------------------------------
-;; QFAILSEARCH - correct parenthesis version
 (defun c:QFAILSEARCH (/ ens idx n en obj prevObj ss cmd)
   (vl-load-com)
   (if (not *HALFF_FAIL_ENTS*)
