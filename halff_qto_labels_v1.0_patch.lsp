@@ -1,6 +1,14 @@
 ;; halff_qto_labels_v1.0_patch.lsp
-;; v1.2: add QDUMPLABEL diagnostic + v1.1 fixes
-;; Load AFTER halff_qto_labels_v1.0.lsp
+;; v1.3: add QDUMPLABEL diagnostic + v1.1 fixes
+;; SELF-CONTAINED: APPLOADing this file is sufficient.
+;; It automatically loads halff_qto_labels_v1.0.lsp if not already loaded.
+
+(if (not (and (fboundp 'c:QRUN) (fboundp 'halff:process-dwg-file)))
+  (if (findfile "halff_qto_labels_v1.0.lsp")
+    (progn
+      (princ "\nLoading halff_qto_labels_v1.0.lsp...")
+      (load (findfile "halff_qto_labels_v1.0.lsp")))
+    (princ "\nWARN: halff_qto_labels_v1.0.lsp not on support path.")))
 
 ;; -----------------------------------------------------------------------
 (defun halff:normalize-ws (s / i c code out last-sp)
@@ -70,7 +78,6 @@
   (not (null (vl-string-search n h))))
 
 ;; -----------------------------------------------------------------------
-;; Print one DXF/XDATA pair value to the command line.
 (defun halff:dump-pair (code val)
   (princ (strcat "\n  [" (itoa code) "] "))
   (if (= (type val) 'STR)
@@ -78,7 +85,6 @@
     (princ (vl-princ-to-string val))))
 
 ;; -----------------------------------------------------------------------
-;; QDUMPLABEL -- select any Civil 3D label, print all discoverable text.
 (defun c:QDUMPLABEL
        (/ en ed pair obj pname res xd app sub-en sub-ed)
   (vl-load-com)
@@ -94,24 +100,19 @@
           (princ "\n    Handle: ")
           (princ (cdr (assoc 5 ed)))
           ))
-      ;; DXF string codes
       (princ "\n\n--- DXF group codes (strings) ---")
       (foreach pair ed
         (if (= (type (cdr pair)) 'STR)
           (halff:dump-pair (car pair) (cdr pair))))
-      ;; XDATA from all apps
       (setq xd (entget en '("*")) app nil)
       (foreach pair xd
         (cond
-          ((= (car pair) -3)
-           (setq app T))
+          ((= (car pair) -3) (setq app T))
           ((and app (= (car pair) 1001))
            (princ (strcat "\n\n--- XDATA: " (cdr pair) " ---"))
            (setq app (cdr pair)))
-          (app
-           (halff:dump-pair (car pair) (cdr pair)))
+          (app (halff:dump-pair (car pair) (cdr pair)))
           ))
-      ;; VLA string properties
       (setq obj (vlax-ename->vla-object en))
       (princ "\n\n--- VLA string properties ---")
       (foreach pname '("TextString" "Text" "Contents" "LabelText"
@@ -125,15 +126,11 @@
           (progn
             (princ (strcat "\n  " pname ": "))
             (princ res))))
-      ;; First child entity strings
-      (setq sub-en (entnext en)
-            sub-ed nil)
-      (if sub-en
-        (setq sub-ed (entget sub-en)))
+      (setq sub-en (entnext en) sub-ed nil)
+      (if sub-en (setq sub-ed (entget sub-en)))
       (if (and sub-en sub-ed
                (assoc 330 sub-ed)
-               (equal (cdr (assoc 330 sub-ed))
-                      (cdr (assoc 5 ed))))
+               (equal (cdr (assoc 330 sub-ed)) (cdr (assoc 5 ed))))
         (progn
           (princ "\n\n--- First child entity ---")
           (princ (strcat "\n  Type: " (cdr (assoc 0 sub-ed))))
@@ -141,10 +138,8 @@
             (if (= (type (cdr pair)) 'STR)
               (halff:dump-pair (car pair) (cdr pair))))
           ))
-      ;; Full COM interface dump (properties + methods)
       (princ "\n\n--- vlax-dump-object ---")
       (vlax-dump-object obj T)
-      ;; Probe Civil3D-specific methods by name
       (princ "\n\n--- Civil3D method probes ---")
       (foreach meth '("GetTextComponentCount"
                       "GetTextComponentStringAt"
