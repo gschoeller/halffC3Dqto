@@ -78,10 +78,7 @@
     (princ (vl-princ-to-string val))))
 
 ;; -----------------------------------------------------------------------
-;; QDUMPLABEL -- select any Civil 3D label, print all discoverable text:
-;;   entity type + handle, DXF string codes, XDATA (all apps), VLA string
-;;   properties, first child entity strings.
-;; Share the output so QRUN can be taught to read label text overrides.
+;; QDUMPLABEL -- select any Civil 3D label, print all discoverable text.
 (defun c:QDUMPLABEL
        (/ en ed pair obj pname res xd app sub-en sub-ed)
   (vl-load-com)
@@ -144,6 +141,32 @@
             (if (= (type (cdr pair)) 'STR)
               (halff:dump-pair (car pair) (cdr pair))))
           ))
+      ;; Full COM interface dump (properties + methods)
+      (princ "\n\n--- vlax-dump-object ---")
+      (vlax-dump-object obj T)
+      ;; Probe Civil3D-specific methods by name
+      (princ "\n\n--- Civil3D method probes ---")
+      (foreach meth '("GetTextComponentCount"
+                      "GetTextComponentStringAt"
+                      "GetOverrideText"
+                      "GetUserTextOverride"
+                      "GetTextString"
+                      "GetLabelTextOverride"
+                      "GetLabelDisplayString")
+        (setq res (vl-catch-all-apply
+                    'vlax-invoke-method (list obj meth 0)))
+        (if (not (vl-catch-all-error-p res))
+          (progn
+            (princ (strcat "\n  " meth "(0): "))
+            (princ (vl-princ-to-string res)))
+          (progn
+            (setq res (vl-catch-all-apply
+                        'vlax-invoke-method (list obj meth)))
+            (if (not (vl-catch-all-error-p res))
+              (progn
+                (princ (strcat "\n  " meth "(): "))
+                (princ (vl-princ-to-string res))))
+            )))
       (princ "\n\n=== QDUMPLABEL done ===\n")))
   (princ))
 
