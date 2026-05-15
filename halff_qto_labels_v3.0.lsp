@@ -1,1 +1,1 @@
-python3 -c "import sys; sys.stdout.write(open('/tmp/out.txt').read())"
+python3 -c "import json; d=json.load(open('/tmp/lsp_content.json')); print(d['content'], end='')"
