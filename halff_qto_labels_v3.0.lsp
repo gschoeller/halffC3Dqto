@@ -1469,10 +1469,9 @@
             totalQty 0.0
             vpQtys   (halff:zeros (length vps)))
       (vlax-for obj ms
-        (setq oname (vl-string-downcase
-                      (vl-catch-all-apply 'vla-get-ObjectName (list obj))))
+        (setq oname (vl-catch-all-apply 'vla-get-ObjectName (list obj)))
         (if (and (not (vl-catch-all-error-p oname))
-                 (vl-string-search searchToken oname))
+                 (vl-string-search searchToken (strcase oname T)))
           (progn
             (setq styleVal (vl-catch-all-apply
                              'vlax-get-property (list obj "StyleName")))
