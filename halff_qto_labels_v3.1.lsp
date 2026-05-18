@@ -1739,7 +1739,7 @@
                                  (/= filepath "")
                                  (or (/= layer "")
                                      (/= textcontent "")
-                                     (and (/= style "")
+                                     (and (or (/= style "") (/= c3ddesc ""))
                                           (member (strcase obj)
                                                   (list "PIPE" "STRUCTURE")))))
                           (progn
