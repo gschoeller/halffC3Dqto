@@ -1507,7 +1507,9 @@
                              lenVal
                              (member (type lenVal) '(REAL INT)))
                       (setq qtyVal (* (float lenVal) fs))
-                      (setq qtyVal 0.0)))
+                      (setq qtyVal 0.0))
+                    (if *HALFF_ROUND_EACH*
+                      (setq qtyVal (halff:round0 qtyVal))))
                   ;; EA (pipe count, structure count, or any other unit): count
                   (setq qtyVal 1.0))
                 (setq found (1+ found))
