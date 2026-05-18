@@ -1496,8 +1496,11 @@
                 T  ; no style filter -> pass
                 (and styleVal (not (vl-catch-all-error-p styleVal))
                      (= (type styleVal) 'STR)
-                     (= (strcase (halff:trim styleVal))
-                        (strcase (halff:trim styleFilter))))))
+                     (vl-some
+                       '(lambda (tok)
+                          (= (strcase (halff:trim tok))
+                             (strcase (halff:trim styleVal))))
+                       (halff:split styleFilter ",")))))
             ;; --- Description match ------------------------------------
             (setq descVal (vl-catch-all-apply
                             'vlax-get-property (list obj "Description")))
