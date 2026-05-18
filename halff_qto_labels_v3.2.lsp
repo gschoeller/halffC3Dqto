@@ -1465,35 +1465,34 @@
 ;; Deducts InnerDiameterOrWidth/2 for each pipe end whose connected
 ;; structure appears in structFilters.  Prints a diagnostic line per end.
 ;; Returns the corrected length (drawing units, clamped >= 0).
-(defun halff:pipe-length-corrected (pipeObj rawLen structFilters / prop s rad correction)
+(defun halff:struct-inner-half (structObj / v)
+  ;; Try circular first, then rectangular width, then rectangular length.
+  ;; Returns half the inner dimension (drawing units) or nil if unavailable.
+  (vl-some
+    '(lambda (propName / v)
+       (setq v (vl-catch-all-apply 'vlax-get-property (list structObj propName)))
+       (if (and (not (vl-catch-all-error-p v)) v (member (type v) '(REAL INT)))
+         (/ (float v) 2.0)
+         nil))
+    '("InnerDiameterOrWidth" "InnerWidth" "InnerLength")))
+
+(defun halff:pipe-length-corrected (pipeObj rawLen structFilters / prop s half correction)
   (setq correction 0.0)
   (if structFilters
     (foreach prop '("StartStructure" "EndStructure")
       (setq s (vl-catch-all-apply 'vlax-get-property (list pipeObj prop)))
-      (if (vl-catch-all-error-p s)
-        (princ (strcat "\n        " prop ": property error"))
-        (if (null s)
-          (princ (strcat "\n        " prop ": nil (no structure)"))
-          (progn
-            (if (halff:struct-in-filters? s structFilters)
-              (progn
-                (setq rad (vl-catch-all-apply
-                            'vlax-get-property (list s "InnerDiameterOrWidth")))
-                (if (and (not (vl-catch-all-error-p rad)) rad
-                         (member (type rad) '(REAL INT)))
-                  (progn
-                    (princ (strcat "\n        " prop
-                                   ": matched, deducting " (rtos (/ (float rad) 2.0) 2 4)
-                                   " (inner r=" (rtos (float rad) 2 4) ")"))
-                    (setq correction (+ correction (/ (float rad) 2.0))))
-                  (princ (strcat "\n        " prop
-                                 ": matched but InnerDiameterOrWidth="
-                                 (vl-princ-to-string rad)))))
-              (princ (strcat "\n        " prop ": connected but not in filter list"))))))))
+      (if (and (not (vl-catch-all-error-p s)) s
+               (halff:struct-in-filters? s structFilters))
+        (progn
+          (setq half (halff:struct-inner-half s))
+          (if half
+            (setq correction (+ correction half))
+            (princ (strcat "\n        WARNING: " prop
+                           " matched but no inner dimension found")))))))
   (if (> correction 0.0)
-    (princ (strcat "\n        raw=" (rtos rawLen 2 4)
-                   " correction=" (rtos correction 2 4)
-                   " result=" (rtos (max 0.0 (- rawLen correction)) 2 4))))
+    (princ (strcat "\n        Structure correction: raw=" (rtos rawLen 2 4)
+                   " -" (rtos correction 2 4)
+                   " = " (rtos (max 0.0 (- rawLen correction)) 2 4))))
   (max 0.0 (- rawLen correction)))
 
 (defun halff:civil3d-qty-in-file
