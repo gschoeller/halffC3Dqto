@@ -1469,9 +1469,16 @@
             totalQty 0.0
             vpQtys   (halff:zeros (length vps)))
       (vlax-for obj ms
+        ;; Match by VLA ObjectName OR DXF entity type (handles proxy entities)
         (setq oname (vl-catch-all-apply 'vla-get-ObjectName (list obj)))
-        (if (and (not (vl-catch-all-error-p oname))
-                 (vl-string-search searchToken (strcase oname T)))
+        (setq en    (vl-catch-all-apply 'vlax-vla-object->ename (list obj)))
+        (setq dxftype
+          (if (not (vl-catch-all-error-p en))
+            (strcase (cdr (assoc 0 (entget en))))
+            ""))
+        (if (or (and (not (vl-catch-all-error-p oname))
+                     (vl-string-search searchToken (strcase oname T)))
+                (vl-string-search searchToken dxftype))
           (progn
             (setq styleVal (vl-catch-all-apply
                              'vlax-get-property (list obj "StyleName")))
@@ -2208,6 +2215,62 @@
                           )
   (princ))
 
+;; -----------------------------------------------------------------------
+;; QCIVIL3DPROBE -- iterate model space and report all Civil3D-like objects:
+;;   DXF entity type, VLA ObjectName, and StyleName if available.
+;;   Run this in the drawing that contains your pipes/structures to
+;;   confirm the ObjectName and StyleName values QRUN needs to match.
+(defun c:QCIVIL3DPROBE (/ ms obj oname en dxftype styleVal cnt)
+  (vl-load-com)
+  (setq ms (vla-get-ModelSpace
+             (vla-get-ActiveDocument (vlax-get-acad-object))))
+  (setq cnt 0)
+  (princ "\nQCIVIL3DPROBE: scanning model space for Civil3D objects...")
+  (vlax-for obj ms
+    (setq en (vl-catch-all-apply 'vlax-vla-object->ename (list obj)))
+    (setq dxftype
+      (if (not (vl-catch-all-error-p en))
+        (cdr (assoc 0 (entget en)))
+        "?"))
+    (setq oname (vl-catch-all-apply 'vla-get-ObjectName (list obj)))
+    (if (vl-catch-all-error-p oname) (setq oname "?"))
+    ;; Report anything with AECC in type/name, or non-standard AutoCAD entities
+    (if (or (vl-string-search "AECC" (strcase dxftype))
+            (vl-string-search "AECC" (strcase oname))
+            (vl-string-search "PIPE" (strcase dxftype))
+            (vl-string-search "STRUCT" (strcase dxftype)))
+      (progn
+        (setq styleVal (vl-catch-all-apply
+                         'vlax-get-property (list obj "StyleName")))
+        (if (vl-catch-all-error-p styleVal) (setq styleVal "N/A"))
+        (princ (strcat "\n  DXF=" dxftype
+                       "  ObjectName=" oname
+                       "  StyleName=" (if styleVal (vl-princ-to-string styleVal) "nil")))
+        (setq cnt (1+ cnt)))))
+  (princ (strcat "\n\nFound " (itoa cnt) " Civil3D object(s)."))
+  (princ "\nIf count=0, try QCIVIL3DPROBE2 to dump ALL entity types.")
+  (princ))
+
+;; Fallback: dump every unique DXF entity type found in model space
+(defun c:QCIVIL3DPROBE2 (/ ms obj en dxftype seen)
+  (vl-load-com)
+  (setq ms (vla-get-ModelSpace
+             (vla-get-ActiveDocument (vlax-get-acad-object))))
+  (setq seen '())
+  (princ "\nQCIVIL3DPROBE2: all unique DXF entity types in model space:")
+  (vlax-for obj ms
+    (setq en (vl-catch-all-apply 'vlax-vla-object->ename (list obj)))
+    (if (not (vl-catch-all-error-p en))
+      (progn
+        (setq dxftype (cdr (assoc 0 (entget en))))
+        (if (not (member dxftype seen))
+          (progn
+            (setq seen (cons dxftype seen))
+            (princ (strcat "\n  " dxftype)))))))
+  (princ (strcat "\n\nTotal unique types: " (itoa (length seen))))
+  (princ))
+
+;; -----------------------------------------------------------------------
 (defun c:QDUPLICATES (/ tol prec s i e key seen pair dup cnt)
   (vl-load-com)
   (initget 6)
