@@ -1466,15 +1466,17 @@
 ;; structure appears in structFilters.  Prints a diagnostic line per end.
 ;; Returns the corrected length (drawing units, clamped >= 0).
 (defun halff:struct-inner-half (structObj / v)
-  ;; Try circular first, then rectangular width, then rectangular length.
-  ;; Returns half the inner dimension (drawing units) or nil if unavailable.
+  ;; Civil3D: StructureInnerDiameterOrWidth for circular manholes,
+  ;; StructureInnerLength for rectangular junction boxes.
+  ;; Returns nil when value is 0 (null/connector structures have no wall).
   (vl-some
     '(lambda (propName / v)
        (setq v (vl-catch-all-apply 'vlax-get-property (list structObj propName)))
-       (if (and (not (vl-catch-all-error-p v)) v (member (type v) '(REAL INT)))
+       (if (and (not (vl-catch-all-error-p v)) v
+                (member (type v) '(REAL INT)) (> (float v) 0.0))
          (/ (float v) 2.0)
          nil))
-    '("InnerDiameterOrWidth" "InnerWidth" "InnerLength")))
+    '("StructureInnerDiameterOrWidth" "StructureInnerLength")))
 
 (defun halff:pipe-length-corrected (pipeObj rawLen structFilters / prop s half correction)
   (setq correction 0.0)
