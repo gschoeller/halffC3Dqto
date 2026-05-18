@@ -1425,7 +1425,7 @@
 
 (defun halff:civil3d-qty-in-file
        (dwgPath payitem unit styleFilter objType vps
-        / dbx openRes ms obj oname styleVal lenVal qtyVal
+        / dbx openRes ms obj oname styleObj styleVal lenVal qtyVal
           found totalQty vpQtys hitCount firstHitIdx i
           inVpRes isCurrentDwg curPath en fs searchToken)
   ;; objType: "PIPE" or "STRUCTURE"
@@ -1480,10 +1480,14 @@
                      (vl-string-search searchToken (strcase oname T)))
                 (vl-string-search searchToken dxftype))
           (progn
-            (setq styleVal (vl-catch-all-apply
-                             'vlax-get-property (list obj "StyleName")))
-            (if (and (not (vl-catch-all-error-p styleVal))
-                     styleVal (= (type styleVal) 'STR)
+            (setq styleObj (vl-catch-all-apply
+                             'vlax-get-property (list obj "Style")))
+            (if (not (vl-catch-all-error-p styleObj))
+              (setq styleVal (vl-catch-all-apply
+                               'vlax-get-property (list styleObj "Name")))
+              (setq styleVal nil))
+            (if (and styleVal (not (vl-catch-all-error-p styleVal))
+                     (= (type styleVal) 'STR)
                      (= (strcase (halff:trim styleVal))
                         (strcase (halff:trim styleFilter))))
               (progn
@@ -2220,7 +2224,7 @@
 ;;   DXF entity type, VLA ObjectName, and StyleName if available.
 ;;   Run this in the drawing that contains your pipes/structures to
 ;;   confirm the ObjectName and StyleName values QRUN needs to match.
-(defun c:QCIVIL3DPROBE (/ ms obj oname en dxftype styleVal cnt)
+(defun c:QCIVIL3DPROBE (/ ms obj oname en dxftype styleObj styleVal lenVal cnt)
   (vl-load-com)
   (setq ms (vla-get-ModelSpace
              (vla-get-ActiveDocument (vlax-get-acad-object))))
@@ -2240,12 +2244,26 @@
             (vl-string-search "PIPE" (strcase dxftype))
             (vl-string-search "STRUCT" (strcase dxftype)))
       (progn
-        (setq styleVal (vl-catch-all-apply
-                         'vlax-get-property (list obj "StyleName")))
-        (if (vl-catch-all-error-p styleVal) (setq styleVal "N/A"))
+        ;; Style via Style object -> Name
+        (setq styleObj (vl-catch-all-apply 'vlax-get-property (list obj "Style")))
+        (if (not (vl-catch-all-error-p styleObj))
+          (setq styleVal (vl-catch-all-apply 'vlax-get-property (list styleObj "Name")))
+          (setq styleVal nil))
+        (if (or (null styleVal) (vl-catch-all-error-p styleVal))
+          (setq styleVal "N/A"))
+        ;; Length probe: Length2D -> Length3D -> Length
+        (setq lenVal (vl-catch-all-apply 'vlax-get-property (list obj "Length2D")))
+        (if (or (vl-catch-all-error-p lenVal) (null lenVal))
+          (setq lenVal (vl-catch-all-apply 'vlax-get-property (list obj "Length3D"))))
+        (if (or (vl-catch-all-error-p lenVal) (null lenVal))
+          (setq lenVal (vl-catch-all-apply 'vlax-get-property (list obj "Length"))))
+        (if (or (vl-catch-all-error-p lenVal) (null lenVal))
+          (setq lenVal "N/A")
+          (setq lenVal (rtos lenVal 2 4)))
         (princ (strcat "\n  DXF=" dxftype
                        "  ObjectName=" oname
-                       "  StyleName=" (if styleVal (vl-princ-to-string styleVal) "nil")))
+                       "  Style.Name=" (vl-princ-to-string styleVal)
+                       "  Length=" lenVal))
         (setq cnt (1+ cnt)))))
   (princ (strcat "\n\nFound " (itoa cnt) " Civil3D object(s)."))
   (princ "\nIf count=0, try QCIVIL3DPROBE2 to dump ALL entity types.")
