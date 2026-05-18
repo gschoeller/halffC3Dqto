@@ -2359,6 +2359,37 @@
 ;; -----------------------------------------------------------------------
 ;; QCIVIL3DPROBE -- iterate model space and report all Civil3D-like objects:
 ;;   DXF entity type, VLA ObjectName, and StyleName if available.
+;; Dumps all VLA properties of the first STRUCTURE object found in model
+;; space.  Run in the drawing with your structures to find the correct
+;; property name for inner dimensions.
+(defun c:QPROBESTRUCT (/ ms obj en dxftype oname found)
+  (vl-load-com)
+  (setq ms (vla-get-ModelSpace
+             (vla-get-ActiveDocument (vlax-get-acad-object))))
+  (setq found nil)
+  (vlax-for obj ms
+    (if (not found)
+      (progn
+        (setq en (vl-catch-all-apply 'vlax-vla-object->ename (list obj)))
+        (setq dxftype
+          (if (not (vl-catch-all-error-p en))
+            (strcase (cdr (assoc 0 (entget en))))
+            ""))
+        (setq oname (vl-catch-all-apply 'vla-get-ObjectName (list obj)))
+        (if (vl-catch-all-error-p oname) (setq oname ""))
+        (if (or (vl-string-search "STRUCT" dxftype)
+                (vl-string-search "struct" (strcase oname T)))
+          (progn
+            (setq found T)
+            (princ (strcat "\nQPROBESTRUCT: dumping properties of " oname
+                           " (DXF=" dxftype ")"))
+            (princ "\n--- vlax-dump-object output ---")
+            (vlax-dump-object obj)
+            (princ "\n--- end dump ---"))))))
+  (if (not found)
+    (princ "\nQPROBESTRUCT: no STRUCTURE objects found in model space."))
+  (princ))
+
 ;;   Run this in the drawing that contains your pipes/structures to
 ;;   confirm the ObjectName and StyleName values QRUN needs to match.
 (defun c:QCIVIL3DPROBE (/ ms obj oname en dxftype styleObj styleVal lenVal cnt)
