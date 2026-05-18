@@ -1510,10 +1510,11 @@
                   ;; Split descFilter on commas; match if any token equals
                   ;; the object's Description (case-insensitive, trimmed)
                   (setq descParts (halff:split descFilter ","))
+                  (setq descVal (halff:normalize-ws (vl-princ-to-string descVal)))
                   (vl-some
                     '(lambda (tok)
-                       (= (strcase (halff:trim tok))
-                          (strcase (halff:trim (vl-princ-to-string descVal)))))
+                       (= (strcase (halff:trim (halff:normalize-ws tok)))
+                          (strcase (halff:trim descVal))))
                     descParts))))
             (if (and styleMatch descMatch)
               (progn
