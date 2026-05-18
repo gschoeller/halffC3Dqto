@@ -1510,9 +1510,8 @@
                       (setq qtyVal 0.0)))
                   ;; EA (pipe count, structure count, or any other unit): count
                   (setq qtyVal 1.0))
-                (setq found    (1+ found)
-                      totalQty (+ totalQty qtyVal))
-                ;; VP attribution via bounding box centre
+                (setq found (1+ found))
+                ;; VP attribution: only count objects inside exactly 1 viewport
                 (setq hitCount 0 firstHitIdx -1 i 0)
                 (while (< i (length vps))
                   (setq inVpRes
@@ -1523,11 +1522,20 @@
                       (if (= firstHitIdx -1) (setq firstHitIdx i))
                       (setq hitCount (1+ hitCount))))
                   (setq i (1+ i)))
-                (if (= hitCount 1)
-                  (setq vpQtys
-                    (halff:setnth vpQtys (1+ firstHitIdx)
-                                  (+ (nth firstHitIdx vpQtys) qtyVal))))
-                (if isCurrentDwg
+                (cond
+                  ((= hitCount 1)
+                   (setq totalQty (+ totalQty qtyVal))
+                   (setq vpQtys
+                     (halff:setnth vpQtys (1+ firstHitIdx)
+                                   (+ (nth firstHitIdx vpQtys) qtyVal))))
+                  ((> hitCount 1)
+                   (princ (strcat "\n      WARNING: " objType
+                                  " in " (itoa hitCount)
+                                  " viewports - excluding from total")))
+                  (T
+                   (princ (strcat "\n      WARNING: " objType
+                                  " outside all viewports - excluded"))))
+                (if (and isCurrentDwg (= hitCount 1))
                   (progn
                     (setq en (vl-catch-all-apply
                                'vlax-vla-object->ename (list obj)))
@@ -2267,6 +2275,47 @@
         (setq cnt (1+ cnt)))))
   (princ (strcat "\n\nFound " (itoa cnt) " Civil3D object(s)."))
   (princ "\nIf count=0, try QCIVIL3DPROBE2 to dump ALL entity types.")
+  (princ))
+
+;; List every unique Style.Name found on PIPE and STRUCTURE Civil3D objects,
+;; with a count per style.  Run this in the target drawing to confirm that
+;; the style names in your mapping file exactly match what Civil3D returns.
+(defun c:QLISTPIPESTYLES (/ ms obj oname en dxftype styleObj styleVal styles pair)
+  (vl-load-com)
+  (setq ms (vla-get-ModelSpace
+             (vla-get-ActiveDocument (vlax-get-acad-object))))
+  (setq styles '())
+  (princ "\nQLISTPIPESTYLES: collecting style names from PIPE and STRUCTURE objects...")
+  (vlax-for obj ms
+    (setq en (vl-catch-all-apply 'vlax-vla-object->ename (list obj)))
+    (setq dxftype
+      (if (not (vl-catch-all-error-p en))
+        (strcase (cdr (assoc 0 (entget en))))
+        ""))
+    (setq oname (vl-catch-all-apply 'vla-get-ObjectName (list obj)))
+    (if (vl-catch-all-error-p oname) (setq oname ""))
+    (if (or (vl-string-search "PIPE"   dxftype)
+            (vl-string-search "STRUCT" dxftype)
+            (vl-string-search "pipe"   (strcase oname T))
+            (vl-string-search "struct" (strcase oname T)))
+      (progn
+        (setq styleObj (vl-catch-all-apply 'vlax-get-property (list obj "Style")))
+        (setq styleVal
+          (if (not (vl-catch-all-error-p styleObj))
+            (vl-catch-all-apply 'vlax-get-property (list styleObj "Name"))
+            nil))
+        (if (or (null styleVal) (vl-catch-all-error-p styleVal))
+          (setq styleVal "<no style>")
+          (setq styleVal (vl-princ-to-string styleVal)))
+        (setq pair (assoc styleVal styles))
+        (if pair
+          (setq styles
+            (subst (list styleVal (1+ (cadr pair))) pair styles))
+          (setq styles (cons (list styleVal 1) styles))))))
+  (princ (strcat "\n\nFound " (itoa (length styles)) " unique style(s):"))
+  (foreach p (vl-sort styles '(lambda (a b) (< (cadr b) (cadr a))))
+    (princ (strcat "\n  [" (itoa (cadr p)) "x]  " (car p))))
+  (princ "\n\nCompare these names exactly (case-sensitive) with your mapping file.")
   (princ))
 
 ;; Fallback: dump every unique DXF entity type found in model space
