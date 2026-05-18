@@ -2361,35 +2361,53 @@
 ;; -----------------------------------------------------------------------
 ;; QCIVIL3DPROBE -- iterate model space and report all Civil3D-like objects:
 ;;   DXF entity type, VLA ObjectName, and StyleName if available.
-;; Dumps all VLA properties of the first STRUCTURE object found in model
-;; space.  Run in the drawing with your structures to find the correct
-;; property name for inner dimensions.
-(defun c:QPROBESTRUCT (/ ms obj en dxftype oname found)
+;; Dumps all VLA properties of the first physical STRUCTURE (StructureDiameterOrWidth>0)
+;; found in model space, plus probes every candidate inner-dimension property.
+;; Run in the drawing with your structures to find the correct inner dimension name.
+(defun c:QPROBESTRUCT (/ ms obj en dxftype oname outerVal bestObj bestOuter v)
   (vl-load-com)
   (setq ms (vla-get-ModelSpace
              (vla-get-ActiveDocument (vlax-get-acad-object))))
-  (setq found nil)
+  (setq bestObj nil bestOuter 0.0)
+  ;; Find the structure with the largest StructureDiameterOrWidth (most physical)
   (vlax-for obj ms
-    (if (not found)
+    (setq en (vl-catch-all-apply 'vlax-vla-object->ename (list obj)))
+    (setq dxftype
+      (if (not (vl-catch-all-error-p en))
+        (strcase (cdr (assoc 0 (entget en))))
+        ""))
+    (setq oname (vl-catch-all-apply 'vla-get-ObjectName (list obj)))
+    (if (vl-catch-all-error-p oname) (setq oname ""))
+    (if (or (vl-string-search "STRUCT" dxftype)
+            (vl-string-search "struct" (strcase oname T)))
       (progn
-        (setq en (vl-catch-all-apply 'vlax-vla-object->ename (list obj)))
-        (setq dxftype
-          (if (not (vl-catch-all-error-p en))
-            (strcase (cdr (assoc 0 (entget en))))
-            ""))
-        (setq oname (vl-catch-all-apply 'vla-get-ObjectName (list obj)))
-        (if (vl-catch-all-error-p oname) (setq oname ""))
-        (if (or (vl-string-search "STRUCT" dxftype)
-                (vl-string-search "struct" (strcase oname T)))
-          (progn
-            (setq found T)
-            (princ (strcat "\nQPROBESTRUCT: dumping properties of " oname
-                           " (DXF=" dxftype ")"))
-            (princ "\n--- vlax-dump-object output ---")
-            (vlax-dump-object obj)
-            (princ "\n--- end dump ---"))))))
-  (if (not found)
-    (princ "\nQPROBESTRUCT: no STRUCTURE objects found in model space."))
+        (setq outerVal (vl-catch-all-apply 'vlax-get-property
+                                            (list obj "StructureDiameterOrWidth")))
+        (if (and (not (vl-catch-all-error-p outerVal))
+                 outerVal (member (type outerVal) '(REAL INT))
+                 (> (float outerVal) bestOuter))
+          (setq bestObj obj bestOuter (float outerVal))))))
+  (if (not bestObj)
+    (princ "\nQPROBESTRUCT: no physical structure found.")
+    (progn
+      (setq oname (vl-catch-all-apply 'vla-get-ObjectName (list bestObj)))
+      (setq en    (vl-catch-all-apply 'vlax-vla-object->ename (list bestObj)))
+      (setq dxftype (if (not (vl-catch-all-error-p en))
+                      (strcase (cdr (assoc 0 (entget en)))) "?"))
+      (princ (strcat "\nQPROBESTRUCT: largest physical structure  ObjectName=" oname
+                     "  DXF=" dxftype
+                     "  StructureDiameterOrWidth=" (rtos bestOuter 2 4)))
+      (princ "\n--- Probing inner dimension candidates ---")
+      (foreach prop '("StructureInnerDiameterOrWidth" "StructureInnerLength"
+                      "StructureLength" "StructureDiameterOrWidth"
+                      "InnerDiameterOrWidth" "InnerWidth" "InnerLength")
+        (setq v (vl-catch-all-apply 'vlax-get-property (list bestObj prop)))
+        (princ (strcat "\n  " prop " = "
+                       (if (vl-catch-all-error-p v) "<error>"
+                         (vl-princ-to-string v)))))
+      (princ "\n--- Full dump ---")
+      (vlax-dump-object bestObj)
+      (princ "\n--- end ---")))
   (princ))
 
 ;;   Run this in the drawing that contains your pipes/structures to
