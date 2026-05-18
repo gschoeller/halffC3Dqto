@@ -1913,12 +1913,12 @@
                         (if (/= formula "")
                           (progn
                             (setq fval (halff:formula-eval formula rawQty rawMap))
-                            (setq finalQty    (if fval fval rawQty))
+                            (setq finalQty    (if fval (fix (+ fval 0.5)) rawQty))
                             (setq finalVpQtys
                               (mapcar '(lambda (vq / fv)
                                          (setq fv (halff:formula-eval
                                                     formula vq rawMap))
-                                         (if fv fv vq))
+                                         (if fv (fix (+ fv 0.5)) vq))
                                       rawVpQtys))
                             (princ (strcat "\n[ROW " (itoa r) "] FORMULA "
                                            formula " → x=" (rtos rawQty 2 4)
