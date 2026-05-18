@@ -1498,8 +1498,8 @@
                      (= (type styleVal) 'STR)
                      (vl-some
                        '(lambda (tok)
-                          (= (strcase (halff:trim tok))
-                             (strcase (halff:trim styleVal))))
+                          (= (strcase (halff:trim (halff:normalize-ws tok)))
+                             (strcase (halff:trim (halff:normalize-ws styleVal)))))
                        (halff:split styleFilter ",")))))
             ;; --- Description match ------------------------------------
             (setq descVal (vl-catch-all-apply
