@@ -2748,6 +2748,136 @@
   (princ "\nRounding set to: ROUND NEAREST - Each quantity rounded to nearest before adding")
   (princ))
 
+(defun c:QPROBEPIPE (/ e obj en oname vps vp vpPts
+                       pipeSP pipeEP pipePts res1 res2 px py
+                       mnV mxV mnL mxL hitCount firstHitIdx i inVpRes
+                       ptMethod crossing)
+  ;; Pick a Civil3D pipe and print full VP crossing diagnostics
+  (if (not *HALFF_VP_DEFS*)
+    (princ "\nNo VP definitions loaded. Run QVPLOAD first.")
+    (progn
+      (setq e (car (entsel "\nPick a Civil3D pipe: ")))
+      (if (not e)
+        (princ "\nNothing selected.")
+        (progn
+          (setq obj (vlax-ename->vla-object e))
+          (setq en e)
+          (setq oname (vl-catch-all-apply 'vla-get-ObjectName (list obj)))
+          (princ (strcat "\n  ObjectName: "
+                         (if (vl-catch-all-error-p oname) "ERROR" oname)))
+          (setq vps (halff:vp-prep *HALFF_VP_DEFS*))
+          ;; --- Method 1: vlax-curve ---
+          (setq res1 (vl-catch-all-apply 'vlax-curve-getStartPoint (list en)))
+          (setq res2 (vl-catch-all-apply 'vlax-curve-getEndPoint (list en)))
+          (princ (strcat "\n  vlax-curve-getStartPoint: "
+                         (if (vl-catch-all-error-p res1)
+                           (strcat "ERROR - " (vl-catch-all-error-message res1))
+                           (vl-princ-to-string res1))))
+          (princ (strcat "\n  vlax-curve-getEndPoint:   "
+                         (if (vl-catch-all-error-p res2)
+                           (strcat "ERROR - " (vl-catch-all-error-message res2))
+                           (vl-princ-to-string res2))))
+          (setq pipeSP nil pipeEP nil ptMethod "none")
+          ;; Apply method 1 result
+          (if (and (not (vl-catch-all-error-p res1)) (listp res1))
+            (progn (setq pipeSP (list (car res1) (cadr res1))) (setq ptMethod "vlax-curve")))
+          (if (and (not (vl-catch-all-error-p res2)) (listp res2))
+            (setq pipeEP (list (car res2) (cadr res2))))
+          ;; --- Method 2: vlax-get-property ---
+          (if (not pipeSP)
+            (progn
+              (setq res1 (vl-catch-all-apply 'vlax-get-property (list obj "StartPoint")))
+              (setq res2 (vl-catch-all-apply 'vlax-get-property (list obj "EndPoint")))
+              (princ (strcat "\n  StartPoint type: "
+                             (if (vl-catch-all-error-p res1) "ERROR"
+                               (vl-princ-to-string (type res1)))))
+              (princ (strcat "  value: "
+                             (if (vl-catch-all-error-p res1) "N/A"
+                               (vl-princ-to-string res1))))
+              (setq pipeSP
+                (cond
+                  ((or (null res1) (vl-catch-all-error-p res1)) nil)
+                  ((listp res1) (setq ptMethod "prop-list") (list (car res1) (cadr res1)))
+                  ((member (type res1) '(VARIANT SAFEARRAY))
+                   (setq res1 (halff:variant->list res1))
+                   (setq ptMethod "prop-variant")
+                   (if (listp res1) (list (car res1) (cadr res1)) nil))
+                  ((= (type res1) 'VLA-OBJECT)
+                   (setq px (vl-catch-all-apply 'vlax-get-property (list res1 "X")))
+                   (setq py (vl-catch-all-apply 'vlax-get-property (list res1 "Y")))
+                   (princ (strcat "\n    VLA-OBJECT X=" (vl-princ-to-string px)
+                                  " Y=" (vl-princ-to-string py)))
+                   (setq ptMethod "prop-vlaobj")
+                   (if (and (not (vl-catch-all-error-p px)) (numberp px)
+                            (not (vl-catch-all-error-p py)) (numberp py))
+                     (list px py) nil))
+                  (T nil)))
+              (setq pipeEP
+                (cond
+                  ((or (null res2) (vl-catch-all-error-p res2)) nil)
+                  ((listp res2) (list (car res2) (cadr res2)))
+                  ((member (type res2) '(VARIANT SAFEARRAY))
+                   (setq res2 (halff:variant->list res2))
+                   (if (listp res2) (list (car res2) (cadr res2)) nil))
+                  ((= (type res2) 'VLA-OBJECT)
+                   (setq px (vl-catch-all-apply 'vlax-get-property (list res2 "X")))
+                   (setq py (vl-catch-all-apply 'vlax-get-property (list res2 "Y")))
+                   (if (and (not (vl-catch-all-error-p px)) (numberp px)
+                            (not (vl-catch-all-error-p py)) (numberp py))
+                     (list px py) nil))
+                  (T nil)))))
+          ;; --- Method 3: bounding box diagonal ---
+          (if (or (not pipeSP) (not pipeEP))
+            (progn
+              (setq res1 (vl-catch-all-apply
+                           '(lambda ()
+                              (vla-getboundingbox obj 'mnV 'mxV)
+                              (list mnV mxV))
+                           nil))
+              (if (and (not (vl-catch-all-error-p res1)) res1)
+                (progn
+                  (setq mnL (halff:variant->list mnV))
+                  (setq mxL (halff:variant->list mxV))
+                  (if (not pipeSP)
+                    (progn (setq pipeSP (list (car mnL) (cadr mnL))) (setq ptMethod "bbox")))
+                  (if (not pipeEP) (setq pipeEP (list (car mxL) (cadr mxL))))))))
+          (princ (strcat "\n  Point method used: " ptMethod))
+          (if pipeSP (princ (strcat "\n  Start (2D): "
+                                    (rtos (car pipeSP) 2 4) ", "
+                                    (rtos (cadr pipeSP) 2 4))))
+          (if pipeEP (princ (strcat "\n  End   (2D): "
+                                    (rtos (car pipeEP) 2 4) ", "
+                                    (rtos (cadr pipeEP) 2 4))))
+          ;; --- VP center check ---
+          (setq hitCount 0 firstHitIdx -1 i 0)
+          (while (< i (length vps))
+            (setq inVpRes (vl-catch-all-apply 'halff:vla-ent-in-vp (list obj (nth i vps))))
+            (if (and (not (vl-catch-all-error-p inVpRes)) inVpRes)
+              (progn
+                (princ (strcat "\n  Center IN VP: " (car (nth i vps))))
+                (if (= firstHitIdx -1) (setq firstHitIdx i))
+                (setq hitCount (1+ hitCount))))
+            (setq i (1+ i)))
+          (princ (strcat "\n  hitCount=" (itoa hitCount)
+                         "  firstHitIdx=" (itoa firstHitIdx)))
+          ;; --- Crossing check ---
+          (if (and pipeSP pipeEP)
+            (progn
+              (setq pipePts (list pipeSP pipeEP))
+              (setq i 0)
+              (while (< i (length vps))
+                (setq vpPts (cadr (nth i vps)))
+                (princ (strcat "\n  VP[" (itoa i) "] " (car (nth i vps))
+                               " (" (itoa (length vpPts)) " pts)"
+                               (if (= i firstHitIdx) " [skipped - center VP]" "")))
+                (if (/= i firstHitIdx)
+                  (progn
+                    (setq crossing (halff:genuine-crossing? pipePts vpPts))
+                    (princ (if crossing " -> CROSSING DETECTED" " -> no crossing"))))
+                (setq i (1+ i))))
+            (princ "\n  Cannot check crossing: endpoint extraction failed"))))
+  (princ))
+
 (princ "\n+===============================================================+")
 (princ "\n|  Halff QTO Labels v1.0                                        |")
 (princ "\n|  • All geometry / layer / VP features from QTO v1.22          |")
@@ -2783,4 +2913,7 @@
 (princ "\n  QDUPLICATES     - Find duplicate objects")
 (princ "\n  QFAILHILITE     - Highlight all failure entities (QRUN)")
 (princ "\n  QFAILSEARCH     - Step through failure entities (QRUN)")
+(princ "\n")
+(princ "\nDiagnostic Commands:")
+(princ "\n  QPROBEPIPE      - Diagnose VP crossing for a picked Civil3D pipe")
 (princ "\n")
