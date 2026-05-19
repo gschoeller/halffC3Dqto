@@ -1665,10 +1665,16 @@
                   ((> hitCount 1)
                    (princ (strcat "\n      WARNING: " objType
                                   " in " (itoa hitCount)
-                                  " viewports - excluding from total")))
+                                  " viewports - excluding from total"))
+                   (if (= (strcase objType) "PIPE")
+                     (halff:log-failure payitem dwgPath "" "PIPE"
+                                        (itoa hitCount) "Pipe crosses viewport boundary")))
                   (T
                    (princ (strcat "\n      WARNING: " objType
-                                  " outside all viewports - excluded"))))
+                                  " outside all viewports - excluded"))
+                   (if (= (strcase objType) "PIPE")
+                     (halff:log-failure payitem dwgPath "" "PIPE"
+                                        "OUTSIDE" "Pipe outside all viewports"))))
                 (if (and isCurrentDwg (= hitCount 1))
                   (progn
                     (setq en (vl-catch-all-apply
