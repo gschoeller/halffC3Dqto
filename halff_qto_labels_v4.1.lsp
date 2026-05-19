@@ -1531,7 +1531,8 @@
           lenVal qtyVal found totalQty vpQtys hitCount firstHitIdx i
           inVpRes isCurrentDwg curPath en fs searchToken
           styleMatch descMatch
-          vpNamesCrossing pipeSP pipeEP spList epList pipePts pipeIsFail)
+          vpNamesCrossing pipeSP pipeEP pipePts pipeIsFail
+          res1 res2 px py mnV mxV mnL mxL)
   ;; objType: "PIPE" or "STRUCTURE"
   ;; styleFilter: Civil3D StyleName to match (case-insensitive)
   ;; unit: "LF" for pipes (sum Length2D), "EA" for structures (count)
@@ -1657,32 +1658,88 @@
                       (if (= firstHitIdx -1) (setq firstHitIdx i))
                       (setq hitCount (1+ hitCount))))
                   (setq i (1+ i)))
-                ;; Crossing detection for pipes: check if start-to-end segment
-                ;; crosses any VP boundary (same logic as polylines)
-                (setq vpNamesCrossing '() pipeIsFail nil)
+                ;; Crossing detection for pipes: get start/end as 2D pts,
+                ;; then check if the segment crosses any VP boundary polygon.
+                ;; Three fallback methods to handle Civil3D proxy variance.
+                (setq vpNamesCrossing '() pipeIsFail nil pipePts nil)
                 (if (= (strcase objType) "PIPE")
                   (progn
-                    ;; Use vlax-curve functions on ename — returns (x y z) list directly,
-                    ;; avoiding the VLA-OBJECT variant that vlax-get-property can return
-                    (setq pipeSP (if (not (vl-catch-all-error-p en))
-                                   (vl-catch-all-apply 'vlax-curve-getStartPoint (list en))
-                                   nil))
-                    (setq pipeEP (if (not (vl-catch-all-error-p en))
-                                   (vl-catch-all-apply 'vlax-curve-getEndPoint (list en))
-                                   nil))
-                    (if (and (not (vl-catch-all-error-p pipeSP)) (listp pipeSP)
-                             (not (vl-catch-all-error-p pipeEP)) (listp pipeEP))
+                    (setq pipeSP nil pipeEP nil)
+                    ;; Method 1: vlax-curve (standard AcDbCurve interface)
+                    (if (not (vl-catch-all-error-p en))
                       (progn
-                        (setq pipePts
-                          (list (list (car pipeSP) (cadr pipeSP))
-                                (list (car pipeEP) (cadr pipeEP))))
+                        (setq res1 (vl-catch-all-apply 'vlax-curve-getStartPoint (list en)))
+                        (setq res2 (vl-catch-all-apply 'vlax-curve-getEndPoint (list en)))
+                        (if (and (not (vl-catch-all-error-p res1)) (listp res1))
+                          (setq pipeSP (list (car res1) (cadr res1))))
+                        (if (and (not (vl-catch-all-error-p res2)) (listp res2))
+                          (setq pipeEP (list (car res2) (cadr res2))))))
+                    ;; Method 2: vlax-get-property — SafeArray, VARIANT, or VLA-OBJECT
+                    (if (not pipeSP)
+                      (progn
+                        (setq res1 (vl-catch-all-apply 'vlax-get-property
+                                                        (list obj "StartPoint")))
+                        (setq pipeSP
+                          (cond
+                            ((or (null res1) (vl-catch-all-error-p res1)) nil)
+                            ((listp res1) (list (car res1) (cadr res1)))
+                            ((member (type res1) '(VARIANT SAFEARRAY))
+                             (setq res1 (halff:variant->list res1))
+                             (if (listp res1) (list (car res1) (cadr res1)) nil))
+                            ((= (type res1) 'VLA-OBJECT)
+                             (setq px (vl-catch-all-apply 'vlax-get-property
+                                                           (list res1 "X")))
+                             (setq py (vl-catch-all-apply 'vlax-get-property
+                                                           (list res1 "Y")))
+                             (if (and (not (vl-catch-all-error-p px)) (numberp px)
+                                      (not (vl-catch-all-error-p py)) (numberp py))
+                               (list px py) nil))
+                            (T nil)))))
+                    (if (not pipeEP)
+                      (progn
+                        (setq res2 (vl-catch-all-apply 'vlax-get-property
+                                                        (list obj "EndPoint")))
+                        (setq pipeEP
+                          (cond
+                            ((or (null res2) (vl-catch-all-error-p res2)) nil)
+                            ((listp res2) (list (car res2) (cadr res2)))
+                            ((member (type res2) '(VARIANT SAFEARRAY))
+                             (setq res2 (halff:variant->list res2))
+                             (if (listp res2) (list (car res2) (cadr res2)) nil))
+                            ((= (type res2) 'VLA-OBJECT)
+                             (setq px (vl-catch-all-apply 'vlax-get-property
+                                                           (list res2 "X")))
+                             (setq py (vl-catch-all-apply 'vlax-get-property
+                                                           (list res2 "Y")))
+                             (if (and (not (vl-catch-all-error-p px)) (numberp px)
+                                      (not (vl-catch-all-error-p py)) (numberp py))
+                               (list px py) nil))
+                            (T nil)))))
+                    ;; Method 3: bbox diagonal as last resort
+                    (if (or (not pipeSP) (not pipeEP))
+                      (progn
+                        (setq res1 (vl-catch-all-apply
+                                     '(lambda ()
+                                        (vla-getboundingbox obj 'mnV 'mxV)
+                                        (list mnV mxV))
+                                     nil))
+                        (if (and (not (vl-catch-all-error-p res1)) res1)
+                          (progn
+                            (setq mnL (halff:variant->list mnV))
+                            (setq mxL (halff:variant->list mxV))
+                            (if (not pipeSP) (setq pipeSP (list (car mnL) (cadr mnL))))
+                            (if (not pipeEP) (setq pipeEP (list (car mxL) (cadr mxL))))))))
+                    (if (and pipeSP pipeEP)
+                      (progn
+                        (setq pipePts (list pipeSP pipeEP))
                         (setq i 0)
                         (while (< i (length vps))
                           (if (and (/= i firstHitIdx)
                                    (halff:genuine-crossing? pipePts (cadr (nth i vps))))
                             (setq vpNamesCrossing
                               (append vpNamesCrossing (list (car (nth i vps))))))
-                          (setq i (1+ i)))))))
+                          (setq i (1+ i))))
+                      (princ "\n      NOTE: Could not get pipe endpoints for crossing check"))))
                 (cond
                   ;; Pipe crosses a VP boundary — log failure, exclude from total
                   ((and (= (strcase objType) "PIPE") vpNamesCrossing)
