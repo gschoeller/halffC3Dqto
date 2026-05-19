@@ -1325,13 +1325,8 @@
             (setq txt (halff:vla-get-text obj))
             (if (and txt (halff:text-contains? textContent txt))
               (progn
-                (setq found    (1+ found)
-                      totalQty (+ totalQty 1.0))
+                (setq found (1+ found))
 
-                ;; VP assignment: best-effort using bounding-box centre.
-                ;; Labels that sit outside all viewports (sheet-level
-                ;; annotations) still contribute to totalQty so the full
-                ;; count is always recorded in QTY_MODEL.
                 (setq hitCount 0 firstHitIdx -1 i 0)
                 (while (< i (length vps))
                   (setq inVpRes
@@ -1343,13 +1338,15 @@
                       (setq hitCount (1+ hitCount))))
                   (setq i (1+ i)))
 
-                (if (= hitCount 1)
-                  ;; Assign to the one matching VP
-                  (setq vpQtys
-                    (halff:setnth vpQtys (1+ firstHitIdx)
-                                  (+ (nth firstHitIdx vpQtys) 1.0))))
-                ;; hitCount 0  → label outside all VPs; counted only in totalQty
-                ;; hitCount >1 → ambiguous; counted only in totalQty
+                (cond
+                  ((= hitCount 1)
+                   (setq totalQty (+ totalQty 1.0))
+                   (setq vpQtys
+                     (halff:setnth vpQtys (1+ firstHitIdx)
+                                   (+ (nth firstHitIdx vpQtys) 1.0))))
+                  ((> hitCount 1)
+                   (setq totalQty (+ totalQty 1.0)))
+                  (T nil)) ; outside all VPs — excluded from totalQty
 
                 ;; Cache entity name for QHILITE / QSEARCH (current dwg only)
                 (if isCurrentDwg
@@ -1491,8 +1488,7 @@
                   (halff:extract-qty-from-text pattern placeholder txt))
                 (if qtyVal
                   (progn
-                    (setq found    (1+ found)
-                          totalQty (+ totalQty qtyVal))
+                    (setq found (1+ found))
                     (setq hitCount 0 firstHitIdx -1 i 0)
                     (while (< i (length vps))
                       (setq inVpRes
@@ -1503,10 +1499,15 @@
                           (if (= firstHitIdx -1) (setq firstHitIdx i))
                           (setq hitCount (1+ hitCount))))
                       (setq i (1+ i)))
-                    (if (= hitCount 1)
-                      (setq vpQtys
-                        (halff:setnth vpQtys (1+ firstHitIdx)
-                                      (+ (nth firstHitIdx vpQtys) qtyVal))))
+                    (cond
+                      ((= hitCount 1)
+                       (setq totalQty (+ totalQty qtyVal))
+                       (setq vpQtys
+                         (halff:setnth vpQtys (1+ firstHitIdx)
+                                       (+ (nth firstHitIdx vpQtys) qtyVal))))
+                      ((> hitCount 1)
+                       (setq totalQty (+ totalQty qtyVal)))
+                      (T nil)) ; outside all VPs — excluded
                     (if isCurrentDwg
                       (progn
                         (setq en (vl-catch-all-apply
