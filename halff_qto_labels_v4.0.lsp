@@ -1530,7 +1530,8 @@
         / dbx openRes ms obj oname styleObj styleVal descVal descParts
           lenVal qtyVal found totalQty vpQtys hitCount firstHitIdx i
           inVpRes isCurrentDwg curPath en fs searchToken
-          styleMatch descMatch)
+          styleMatch descMatch
+          vpNamesCrossing pipeSP pipeEP spList epList pipePts pipeIsFail)
   ;; objType: "PIPE" or "STRUCTURE"
   ;; styleFilter: Civil3D StyleName to match (case-insensitive)
   ;; unit: "LF" for pipes (sum Length2D), "EA" for structures (count)
@@ -1656,20 +1657,52 @@
                       (if (= firstHitIdx -1) (setq firstHitIdx i))
                       (setq hitCount (1+ hitCount))))
                   (setq i (1+ i)))
+                ;; Crossing detection for pipes: check if start-to-end segment
+                ;; crosses any VP boundary (same logic as polylines)
+                (setq vpNamesCrossing '() pipeIsFail nil)
+                (if (= (strcase objType) "PIPE")
+                  (progn
+                    (setq pipeSP (vl-catch-all-apply
+                                   'vlax-get-property (list obj "StartPoint")))
+                    (setq pipeEP (vl-catch-all-apply
+                                   'vlax-get-property (list obj "EndPoint")))
+                    (if (and (not (vl-catch-all-error-p pipeSP)) pipeSP
+                             (not (vl-catch-all-error-p pipeEP)) pipeEP)
+                      (progn
+                        (setq spList (halff:variant->list pipeSP))
+                        (setq epList (halff:variant->list pipeEP))
+                        (setq pipePts
+                          (list (list (car spList) (cadr spList))
+                                (list (car epList) (cadr epList))))
+                        (setq i 0)
+                        (while (< i (length vps))
+                          (if (and (/= i firstHitIdx)
+                                   (halff:genuine-crossing? pipePts (cadr (nth i vps))))
+                            (setq vpNamesCrossing
+                              (append vpNamesCrossing (list (car (nth i vps))))))
+                          (setq i (1+ i)))))))
                 (cond
+                  ;; Pipe crosses a VP boundary — log failure, exclude from total
+                  ((and (= (strcase objType) "PIPE") vpNamesCrossing)
+                   (setq pipeIsFail T)
+                   (princ (strcat "\n      WARNING: PIPE crosses viewport boundary"))
+                   (halff:log-failure payitem dwgPath "" "PIPE"
+                                      vpNamesCrossing "Pipe crosses viewport boundary"))
                   ((= hitCount 1)
                    (setq totalQty (+ totalQty qtyVal))
                    (setq vpQtys
                      (halff:setnth vpQtys (1+ firstHitIdx)
                                    (+ (nth firstHitIdx vpQtys) qtyVal))))
                   ((> hitCount 1)
+                   (setq pipeIsFail T)
                    (princ (strcat "\n      WARNING: " objType
                                   " in " (itoa hitCount)
                                   " viewports - excluding from total"))
                    (if (= (strcase objType) "PIPE")
                      (halff:log-failure payitem dwgPath "" "PIPE"
-                                        (itoa hitCount) "Pipe crosses viewport boundary")))
+                                        (itoa hitCount) "Pipe in multiple viewports")))
                   (T
+                   (setq pipeIsFail T)
                    (princ (strcat "\n      WARNING: " objType
                                   " outside all viewports - excluded"))
                    (if (= (strcase objType) "PIPE")
