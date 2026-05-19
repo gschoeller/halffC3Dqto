@@ -2875,8 +2875,8 @@
                     (setq crossing (halff:genuine-crossing? pipePts vpPts))
                     (princ (if crossing " -> CROSSING DETECTED" " -> no crossing"))))
                 (setq i (1+ i))))
-            (princ "\n  Cannot check crossing: endpoint extraction failed"))))
-  (princ))
+            (princ "\n  Cannot check crossing: endpoint extraction failed")))))
+  (princ)))
 
 (princ "\n+===============================================================+")
 (princ "\n|  Halff QTO Labels v1.0                                        |")
