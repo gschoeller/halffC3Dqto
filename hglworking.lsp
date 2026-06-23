@@ -264,7 +264,7 @@
         (progn
           (princ (strcat "\n  COM read error: " (vl-catch-all-error-message res)))
           nil)
-        res))))
+        res)))
 )
 
 ;; -------------------------------------------------------------------
@@ -548,7 +548,7 @@
             (command ""))
           (princ "\n  WARNING: fewer than 2 points - skipping."))
 
-      ) ;; end (if (not design-err) (progn ...))
+      )) ;; end (if (not design-err) (progn ...))
 
   ) ;; end (foreach pv-name pv-names)
 
