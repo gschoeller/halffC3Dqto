@@ -209,7 +209,6 @@
       (if (and (hgl:num-p xval) (hgl:num-p yval))
         (list (float xval) (float yval))
         nil))))
-)
 
 ;; -------------------------------------------------------------------
 ;; PROFILE VIEW INNER READ - called via vl-catch-all-apply
@@ -246,7 +245,6 @@
                   (float h-scale)          (float v-scale)
                   is-rl)
             nil))))))
-)
 
 ;; -------------------------------------------------------------------
 ;; PROFILE VIEW READ - error-safe wrapper around hgl:pv-read-inner
